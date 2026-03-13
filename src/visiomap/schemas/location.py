@@ -1,19 +1,22 @@
-from typing import Optional
+from __future__ import annotations
+
 from pydantic import BaseModel, Field
+
+__all__ = ["LocationCreate", "LocationUpdate", "LocationResponse"]
 
 
 class LocationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    lat: float = Field(..., ge=-90, le=90)
-    lng: float = Field(..., ge=-180, le=180)
-    radius_m: int = Field(500, ge=10, le=50_000)
-    description: Optional[str] = Field(None, max_length=1000)
+    lat: float = Field(..., ge=-90, le=90, description="Latitude")
+    lng: float = Field(..., ge=-180, le=180, description="Longitude")
+    radius_m: int = Field(500, ge=50, le=50000, description="Monitoring radius in meters")
+    description: str | None = None
 
 
 class LocationUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=200)
-    radius_m: Optional[int] = Field(None, ge=10, le=50_000)
-    description: Optional[str] = None
+    name: str | None = Field(None, min_length=1, max_length=200)
+    radius_m: int | None = Field(None, ge=50, le=50000)
+    description: str | None = None
 
 
 class LocationResponse(BaseModel):
@@ -22,8 +25,8 @@ class LocationResponse(BaseModel):
     lat: float
     lng: float
     radius_m: int
-    description: Optional[str]
-    media_count: int
-    analyzed_count: int
-    avg_crowd_density: Optional[float]
+    description: str | None
+    media_count: int = 0
+    analyzed_count: int = 0
+    avg_crowd_density: float | None = None
     created_at: str
