@@ -15,6 +15,8 @@ from visiomap.schemas.analytics import (
     ComparisonResponse,
     ClusterResponse,
     ScoreTrendResponse,
+    HealthScoreResponse,
+    AnomalyResponse,
 )
 from visiomap.services import AnalyticsService
 from visiomap.services.alert_service import AlertService
@@ -74,6 +76,35 @@ async def score_trend(
     svc: AnalyticsService = Depends(_service),
 ):
     result = await svc.get_score_trend(location_id, window=window)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
+# -- v1.4.0: Location Health Score ---------------------------------------------
+
+@router.get("/locations/{location_id}/health", response_model=HealthScoreResponse)
+async def health_score(
+    location_id: int,
+    svc: AnalyticsService = Depends(_service),
+):
+    """Composite health score combining analysis coverage, crowd density, mood, and environment diversity."""
+    result = await svc.get_health_score(location_id)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
+# -- v1.4.0: Crowd Density Anomalies ------------------------------------------
+
+@router.get("/locations/{location_id}/analytics/anomalies", response_model=AnomalyResponse)
+async def density_anomalies(
+    location_id: int,
+    threshold: float = Query(2.0, ge=1.0, le=5.0, description="Standard deviations for anomaly detection"),
+    svc: AnalyticsService = Depends(_service),
+):
+    """Detect unusual crowd density spikes or drops based on standard deviation analysis."""
+    result = await svc.get_anomalies(location_id, threshold=threshold)
     if not result:
         raise HTTPException(404, "Location not found")
     return result

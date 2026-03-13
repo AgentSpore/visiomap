@@ -192,6 +192,40 @@ class MediaRepo:
         cursor = await self.db.execute(query, params)
         return [json.loads(r[0]) for r in await cursor.fetchall() if r[0]]
 
+    # -- v1.4.0: Tag Search --------------------------------------------------------
+
+    async def search_by_tags(
+        self,
+        tags: list[str],
+        source_type: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM media WHERE 1=1"
+        params: list[Any] = []
+
+        # Build tag filter using json_each for SQLite JSON arrays
+        for tag in tags:
+            query += " AND EXISTS (SELECT 1 FROM json_each(tags) WHERE json_each.value = ?)"
+            params.append(tag)
+
+        if source_type:
+            query += " AND source_type = ?"
+            params.append(source_type)
+        if from_date:
+            query += " AND submitted_at >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND submitted_at <= ?"
+            params.append(to_date + "T23:59:59")
+
+        query += " ORDER BY submitted_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await self.db.execute(query, params)
+        return [self._to_dict(r) for r in await cursor.fetchall()]
+
     # -- Private --
 
     @staticmethod

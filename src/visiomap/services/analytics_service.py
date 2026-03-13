@@ -322,3 +322,241 @@ class AnalyticsService:
             "latest_density": latest_density,
             "latest_moving_avg": latest_ma,
         }
+
+    # -- v1.4.0: Location Health Score ---------------------------------------------
+
+    async def get_health_score(self, location_id: int) -> dict[str, Any] | None:
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+
+        stats = await self.media_repo.get_location_analytics(location_id)
+        analyses = await self.media_repo.get_analyzed_media(location_id)
+
+        factors = []
+        total_score = 0.0
+        max_total = 0.0
+
+        # Factor 1: Analysis Coverage (0-25)
+        max_coverage = 25.0
+        total_media = stats["total_media"]
+        analyzed_media = stats["analyzed_media"]
+        coverage_pct = (analyzed_media / total_media * 100) if total_media > 0 else 0
+        if coverage_pct >= 90:
+            cov_score = 25.0
+        elif coverage_pct >= 70:
+            cov_score = 20.0
+        elif coverage_pct >= 50:
+            cov_score = 15.0
+        elif coverage_pct >= 25:
+            cov_score = 10.0
+        elif total_media > 0:
+            cov_score = 5.0
+        else:
+            cov_score = 0.0
+        factors.append({
+            "name": "analysis_coverage",
+            "score": cov_score, "max_score": max_coverage,
+            "details": f"{analyzed_media}/{total_media} media analyzed ({coverage_pct:.0f}%)",
+        })
+        total_score += cov_score
+        max_total += max_coverage
+
+        # Factor 2: Data Volume (0-20)
+        max_volume = 20.0
+        if total_media >= 50:
+            vol_score = 20.0
+        elif total_media >= 20:
+            vol_score = 15.0
+        elif total_media >= 10:
+            vol_score = 10.0
+        elif total_media >= 3:
+            vol_score = 5.0
+        else:
+            vol_score = 0.0
+        factors.append({
+            "name": "data_volume",
+            "score": vol_score, "max_score": max_volume,
+            "details": f"{total_media} total media items",
+        })
+        total_score += vol_score
+        max_total += max_volume
+
+        # Factor 3: Crowd Density Moderation (0-25) — moderate density is healthiest
+        max_density_score = 25.0
+        avg_density = stats.get("avg_crowd_density")
+        if avg_density is not None:
+            if 2.0 <= avg_density <= 5.0:
+                dens_score = 25.0
+                dens_detail = f"Moderate density ({avg_density:.1f}/10)"
+            elif 1.0 <= avg_density < 2.0 or 5.0 < avg_density <= 7.0:
+                dens_score = 18.0
+                dens_detail = f"Slightly {'low' if avg_density < 2 else 'high'} density ({avg_density:.1f}/10)"
+            elif avg_density < 1.0:
+                dens_score = 10.0
+                dens_detail = f"Very low density ({avg_density:.1f}/10)"
+            else:
+                dens_score = 8.0
+                dens_detail = f"Very high density ({avg_density:.1f}/10) — possible overcrowding"
+        else:
+            dens_score = 0.0
+            dens_detail = "No density data available"
+        factors.append({
+            "name": "crowd_density",
+            "score": dens_score, "max_score": max_density_score,
+            "details": dens_detail,
+        })
+        total_score += dens_score
+        max_total += max_density_score
+
+        # Factor 4: Mood Positivity (0-15)
+        max_mood = 15.0
+        mood_counter: Counter[str] = Counter()
+        for a in analyses:
+            mood_counter[a.get("dominant_mood", "neutral")] += 1
+        dominant_mood = mood_counter.most_common(1)[0][0] if mood_counter else None
+
+        positive_moods = {"happy", "excited", "cheerful", "joyful", "content"}
+        neutral_moods = {"neutral", "calm", "relaxed"}
+        negative_moods = {"sad", "angry", "tense", "anxious", "bored"}
+
+        if not mood_counter:
+            mood_score = 0.0
+            mood_detail = "No mood data"
+        else:
+            total_moods = sum(mood_counter.values())
+            pos_pct = sum(mood_counter.get(m, 0) for m in positive_moods) / total_moods * 100
+            neg_pct = sum(mood_counter.get(m, 0) for m in negative_moods) / total_moods * 100
+            if pos_pct >= 50:
+                mood_score = 15.0
+            elif pos_pct >= 30 and neg_pct < 20:
+                mood_score = 12.0
+            elif neg_pct < 30:
+                mood_score = 8.0
+            else:
+                mood_score = 4.0
+            mood_detail = f"Dominant mood: {dominant_mood} (positive: {pos_pct:.0f}%, negative: {neg_pct:.0f}%)"
+        factors.append({
+            "name": "mood_positivity",
+            "score": mood_score, "max_score": max_mood,
+            "details": mood_detail,
+        })
+        total_score += mood_score
+        max_total += max_mood
+
+        # Factor 5: Environment Diversity (0-15)
+        max_env = 15.0
+        tag_counter: Counter[str] = Counter()
+        for a in analyses:
+            tag_counter.update(a.get("environment_tags", []))
+        unique_tags = len(tag_counter)
+        if unique_tags >= 10:
+            env_score = 15.0
+        elif unique_tags >= 7:
+            env_score = 12.0
+        elif unique_tags >= 4:
+            env_score = 8.0
+        elif unique_tags >= 1:
+            env_score = 4.0
+        else:
+            env_score = 0.0
+        factors.append({
+            "name": "environment_diversity",
+            "score": env_score, "max_score": max_env,
+            "details": f"{unique_tags} unique environment tags detected",
+        })
+        total_score += env_score
+        max_total += max_env
+
+        # Rating
+        health_pct = round(total_score / max_total * 100, 1) if max_total > 0 else 0
+        if health_pct >= 80:
+            rating = "excellent"
+        elif health_pct >= 60:
+            rating = "good"
+        elif health_pct >= 40:
+            rating = "fair"
+        elif health_pct >= 20:
+            rating = "poor"
+        else:
+            rating = "critical"
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "health_score": round(total_score, 1),
+            "max_score": max_total,
+            "health_pct": health_pct,
+            "rating": rating,
+            "factors": factors,
+            "avg_crowd_density": avg_density,
+            "dominant_mood": dominant_mood,
+            "analysis_coverage_pct": round(coverage_pct, 1),
+            "total_media": total_media,
+            "analyzed_media": analyzed_media,
+        }
+
+    # -- v1.4.0: Crowd Density Anomalies -------------------------------------------
+
+    async def get_anomalies(
+        self,
+        location_id: int,
+        threshold: float = 2.0,
+    ) -> dict[str, Any] | None:
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+
+        daily = await self.media_repo.get_daily_trend(location_id)
+        if not daily:
+            return {
+                "location_id": location["id"],
+                "location_name": location["name"],
+                "anomalies": [],
+                "total_anomalies": 0,
+                "baseline_avg_daily": 0.0,
+                "analysis_period_days": 0,
+            }
+
+        densities = [d["avg_density"] for d in daily]
+        avg_density = sum(densities) / len(densities) if densities else 0
+        if len(densities) >= 2:
+            variance = sum((d - avg_density) ** 2 for d in densities) / len(densities)
+            std_dev = math.sqrt(variance)
+        else:
+            std_dev = 0
+
+        anomalies = []
+        for d in daily:
+            if std_dev > 0:
+                deviation = abs(d["avg_density"] - avg_density) / std_dev
+            else:
+                deviation = 0
+
+            if deviation >= threshold:
+                if deviation >= 3.0:
+                    severity = "critical"
+                elif deviation >= 2.5:
+                    severity = "high"
+                else:
+                    severity = "medium"
+
+                anomalies.append({
+                    "date": d["date"],
+                    "avg_density": d["avg_density"],
+                    "baseline_avg": round(avg_density, 2),
+                    "deviation_ratio": round(deviation, 2),
+                    "severity": severity,
+                    "media_count": d["media_count"],
+                })
+
+        anomalies.sort(key=lambda a: a["deviation_ratio"], reverse=True)
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "anomalies": anomalies,
+            "total_anomalies": len(anomalies),
+            "baseline_avg_daily": round(avg_density, 2),
+            "analysis_period_days": len(daily),
+        }

@@ -37,6 +37,26 @@ async def submit_batch(body: MediaBatchCreate, svc: MediaService = Depends(_serv
     return {"created": len(items), "items": items}
 
 
+# -- v1.4.0: Media Tag Search -------------------------------------------------
+
+@router.get("/search", response_model=list[MediaResponse])
+async def search_media(
+    tags: str = Query(..., description="Comma-separated tags to search for"),
+    source_type: str | None = Query(None, description="Filter: photo|video|screenshot"),
+    from_date: str | None = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    to_date: str | None = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    limit: int = Query(100, ge=1, le=500),
+    svc: MediaService = Depends(_service),
+):
+    """Search media across all locations by tags, source type, and date range."""
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    if not tag_list:
+        raise HTTPException(400, "Provide at least one tag")
+    if source_type and source_type not in ("photo", "video", "screenshot"):
+        raise HTTPException(422, "source_type must be photo, video, or screenshot")
+    return await svc.search_by_tags(tag_list, source_type, from_date, to_date, limit)
+
+
 @router.get("", response_model=list[MediaResponse])
 async def list_media(
     location_id: int | None = Query(None),

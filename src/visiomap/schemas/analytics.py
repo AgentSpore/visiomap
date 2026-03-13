@@ -22,6 +22,10 @@ __all__ = [
     "ClusterResponse",
     "TrendPoint",
     "ScoreTrendResponse",
+    "HealthScoreResponse",
+    "HealthFactor",
+    "AnomalyEntry",
+    "AnomalyResponse",
 ]
 
 
@@ -213,3 +217,47 @@ class ScoreTrendResponse(BaseModel):
     overall_trend: str
     latest_density: float | None
     latest_moving_avg: float | None
+
+
+# -- v1.4.0: Location Health Score ---------------------------------------------
+
+class HealthFactor(BaseModel):
+    name: str
+    score: float
+    max_score: float
+    details: str
+
+
+class HealthScoreResponse(BaseModel):
+    location_id: int
+    location_name: str
+    health_score: float
+    max_score: float
+    health_pct: float
+    rating: str
+    factors: list[HealthFactor]
+    avg_crowd_density: float | None
+    dominant_mood: str | None
+    analysis_coverage_pct: float
+    total_media: int
+    analyzed_media: int
+
+
+# -- v1.4.0: Crowd Density Anomalies ------------------------------------------
+
+class AnomalyEntry(BaseModel):
+    date: str
+    avg_density: float
+    baseline_avg: float
+    deviation_ratio: float
+    severity: str
+    media_count: int
+
+
+class AnomalyResponse(BaseModel):
+    location_id: int
+    location_name: str
+    anomalies: list[AnomalyEntry]
+    total_anomalies: int
+    baseline_avg_daily: float
+    analysis_period_days: int

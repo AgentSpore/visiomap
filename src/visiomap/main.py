@@ -25,9 +25,11 @@ app = FastAPI(
         "Location intelligence from visual media. "
         "AI-powered crowd density heatmaps, demographics, mood analytics, "
         "density alerts, location comparison, time-window filtering, CSV data export, "
-        "geofencing, location clustering, and score trend analysis."
+        "geofencing, location clustering, score trend analysis, "
+        "location health scores, cross-location media tag search, "
+        "and crowd density anomaly detection."
     ),
-    version="1.3.0",
+    version="1.4.0",
     lifespan=lifespan,
 )
 
@@ -41,7 +43,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.3.0"}
+    return {"status": "ok", "version": "1.4.0"}
 
 
 @app.get("/map")
