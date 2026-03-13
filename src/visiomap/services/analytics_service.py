@@ -560,3 +560,55 @@ class AnalyticsService:
             "baseline_avg_daily": round(avg_density, 2),
             "analysis_period_days": len(daily),
         }
+
+    # -- v1.5.0: Peak Hours Analysis -----------------------------------------------
+
+    async def get_peak_hours(self, location_id: int) -> dict[str, Any] | None:
+        """Analyze crowd density patterns by hour of day."""
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+
+        hourly_data = await self.media_repo.get_hourly_density(location_id)
+
+        # Fill missing hours with zeros
+        hour_map = {h["hour"]: h for h in hourly_data}
+        hours = []
+        for h in range(24):
+            if h in hour_map:
+                hours.append(hour_map[h])
+            else:
+                hours.append({
+                    "hour": h,
+                    "avg_density": 0.0,
+                    "media_count": 0,
+                    "avg_crowd_count": 0,
+                    "dominant_mood": None,
+                })
+
+        active_hours = [h for h in hours if h["media_count"] > 0]
+        total_analyzed = sum(h["media_count"] for h in hours)
+
+        if active_hours:
+            peak = max(active_hours, key=lambda h: h["avg_density"])
+            quietest = min(active_hours, key=lambda h: h["avg_density"])
+            peak_hour = peak["hour"]
+            quietest_hour = quietest["hour"]
+            peak_density = peak["avg_density"]
+            quietest_density = quietest["avg_density"]
+        else:
+            peak_hour = 0
+            quietest_hour = 0
+            peak_density = 0.0
+            quietest_density = 0.0
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "hours": hours,
+            "peak_hour": peak_hour,
+            "quietest_hour": quietest_hour,
+            "peak_density": round(peak_density, 2),
+            "quietest_density": round(quietest_density, 2),
+            "total_analyzed": total_analyzed,
+        }
