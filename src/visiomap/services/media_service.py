@@ -95,3 +95,14 @@ class MediaService:
         return await self.media_repo.search_by_tags(
             tags, source_type, from_date, to_date, limit,
         )
+
+    # -- v1.5.0: Annotations -------------------------------------------------------
+
+    async def create_annotation(self, media_id: int, text: str, author: str) -> dict[str, Any] | None:
+        return await self.media_repo.create_annotation(media_id, text, author)
+
+    async def list_annotations(self, media_id: int) -> list[dict[str, Any]] | None:
+        return await self.media_repo.list_annotations(media_id)
+
+    async def delete_annotation(self, annotation_id: int) -> bool:
+        return await self.media_repo.delete_annotation(annotation_id)
