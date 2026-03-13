@@ -10,7 +10,10 @@ __all__ = [
     "OverviewResponse",
     "LocationSummary",
     "AlertCreate",
+    "AlertUpdate",
     "AlertResponse",
+    "ComparisonEntry",
+    "ComparisonResponse",
 ]
 
 
@@ -79,6 +82,13 @@ class AlertCreate(BaseModel):
     label: str | None = Field(None, max_length=120)
 
 
+class AlertUpdate(BaseModel):
+    threshold: float | None = Field(None, ge=0, le=100)
+    webhook_url: str | None = Field(None, min_length=1)
+    label: str | None = None
+    active: bool | None = None
+
+
 class AlertResponse(BaseModel):
     id: int
     location_id: int
@@ -89,3 +99,23 @@ class AlertResponse(BaseModel):
     last_fired_at: str | None
     active: bool
     created_at: str
+
+
+# -- Location Comparison -------------------------------------------------------
+
+class ComparisonEntry(BaseModel):
+    location_id: int
+    location_name: str
+    category: str
+    total_media: int
+    analyzed_media: int
+    avg_crowd_density: float | None
+    peak_crowd_density: float | None
+    dominant_mood: str | None
+    top_tags: list[str]
+
+
+class ComparisonResponse(BaseModel):
+    locations: list[ComparisonEntry]
+    from_date: str | None
+    to_date: str | None

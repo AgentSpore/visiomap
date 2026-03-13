@@ -10,7 +10,7 @@ class MediaRepo:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
 
-    # ── CRUD ──────────────────────────────────────────────────────────────────
+    # -- CRUD --
 
     async def create(self, data: dict[str, Any]) -> dict[str, Any]:
         cursor = await self.db.execute(
@@ -25,7 +25,7 @@ class MediaRepo:
             ),
         )
         await self.db.commit()
-        return await self.get_by_id(cursor.lastrowid)  # type: ignore[arg-type]
+        return await self.get_by_id(cursor.lastrowid)
 
     async def get_by_id(self, media_id: int) -> dict[str, Any] | None:
         cursor = await self.db.execute(
@@ -62,7 +62,7 @@ class MediaRepo:
         await self.db.commit()
         return True
 
-    # ── Analysis ──────────────────────────────────────────────────────────────
+    # -- Analysis --
 
     async def get_pending(self, location_id: int | None = None) -> list[dict[str, Any]]:
         query = "SELECT * FROM media WHERE analyzed = 0"
@@ -81,7 +81,7 @@ class MediaRepo:
         )
         await self.db.commit()
 
-    # ── Analytics queries ─────────────────────────────────────────────────────
+    # -- Analytics queries --
 
     async def count_all(self) -> int:
         cursor = await self.db.execute("SELECT COUNT(*) FROM media")
@@ -98,9 +98,13 @@ class MediaRepo:
         row = await cursor.fetchone()
         return round(row[0], 2) if row and row[0] else None
 
-    async def get_location_analytics(self, location_id: int) -> dict[str, Any]:
-        cursor = await self.db.execute(
-            """SELECT
+    async def get_location_analytics(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any]:
+        query = """SELECT
                  COUNT(*) AS total,
                  SUM(CASE WHEN analyzed = 1 THEN 1 ELSE 0 END) AS analyzed_count,
                  AVG(CASE WHEN analyzed = 1
@@ -108,9 +112,15 @@ class MediaRepo:
                  MAX(CASE WHEN analyzed = 1
                      THEN json_extract(analysis_json, '$.crowd_density') END) AS peak_density
                FROM media
-               WHERE location_id = ?""",
-            (location_id,),
-        )
+               WHERE location_id = ?"""
+        params: list[Any] = [location_id]
+        if from_date:
+            query += " AND submitted_at >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND submitted_at <= ?"
+            params.append(to_date + "T23:59:59")
+        cursor = await self.db.execute(query, params)
         row = await cursor.fetchone()
         return {
             "total_media": row[0] or 0,
@@ -119,44 +129,70 @@ class MediaRepo:
             "peak_crowd_density": round(row[3], 2) if row[3] else None,
         }
 
-    async def get_analyzed_media(self, location_id: int) -> list[dict[str, Any]]:
-        cursor = await self.db.execute(
-            "SELECT analysis_json FROM media WHERE location_id = ? AND analyzed = 1",
-            (location_id,),
-        )
+    async def get_analyzed_media(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT analysis_json FROM media WHERE location_id = ? AND analyzed = 1"
+        params: list[Any] = [location_id]
+        if from_date:
+            query += " AND submitted_at >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND submitted_at <= ?"
+            params.append(to_date + "T23:59:59")
+        cursor = await self.db.execute(query, params)
         results = []
         for row in await cursor.fetchall():
             if row[0]:
                 results.append(json.loads(row[0]))
         return results
 
-    async def get_daily_trend(self, location_id: int) -> list[dict[str, Any]]:
-        cursor = await self.db.execute(
-            """SELECT date(submitted_at) AS day,
+    async def get_daily_trend(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """SELECT date(submitted_at) AS day,
                       AVG(json_extract(analysis_json, '$.crowd_density')) AS avg_density,
                       COUNT(*) AS media_count
                FROM media
-               WHERE location_id = ? AND analyzed = 1
-               GROUP BY day
-               ORDER BY day DESC
-               LIMIT 30""",
-            (location_id,),
-        )
+               WHERE location_id = ? AND analyzed = 1"""
+        params: list[Any] = [location_id]
+        if from_date:
+            query += " AND submitted_at >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND submitted_at <= ?"
+            params.append(to_date + "T23:59:59")
+        query += " GROUP BY day ORDER BY day DESC LIMIT 30"
+        cursor = await self.db.execute(query, params)
         return [
             {"date": r[0], "avg_density": round(r[1], 2), "media_count": r[2]}
             for r in await cursor.fetchall()
         ]
 
-    async def get_heatmap_data(self, location_id: int) -> list[dict[str, Any]]:
-        """Each analyzed media contributes a heat point based on its analysis."""
-        cursor = await self.db.execute(
-            """SELECT analysis_json FROM media
-               WHERE location_id = ? AND analyzed = 1""",
-            (location_id,),
-        )
+    async def get_heatmap_data(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT analysis_json FROM media WHERE location_id = ? AND analyzed = 1"
+        params: list[Any] = [location_id]
+        if from_date:
+            query += " AND submitted_at >= ?"
+            params.append(from_date)
+        if to_date:
+            query += " AND submitted_at <= ?"
+            params.append(to_date + "T23:59:59")
+        cursor = await self.db.execute(query, params)
         return [json.loads(r[0]) for r in await cursor.fetchall() if r[0]]
 
-    # ── Private ───────────────────────────────────────────────────────────────
+    # -- Private --
 
     @staticmethod
     def _to_dict(row: aiosqlite.Row) -> dict[str, Any]:

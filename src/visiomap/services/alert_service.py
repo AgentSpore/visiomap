@@ -54,6 +54,22 @@ class AlertService:
         cursor = await self.db.execute(query, params)
         return [self._to_dict(r) for r in await cursor.fetchall()]
 
+    async def update(self, alert_id: int, updates: dict[str, Any]) -> dict[str, Any] | None:
+        await self._ensure_table()
+        existing = await self.get(alert_id)
+        if not existing:
+            return None
+        fields = {k: v for k, v in updates.items() if v is not None}
+        if "active" in fields:
+            fields["active"] = int(fields["active"])
+        if not fields:
+            return existing
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [alert_id]
+        await self.db.execute(f"UPDATE density_alerts SET {set_clause} WHERE id = ?", values)
+        await self.db.commit()
+        return await self.get(alert_id)
+
     async def delete(self, alert_id: int) -> bool:
         await self._ensure_table()
         cursor = await self.db.execute("SELECT 1 FROM density_alerts WHERE id = ?", (alert_id,))

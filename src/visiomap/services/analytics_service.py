@@ -31,13 +31,18 @@ class AnalyticsService:
             "locations_summary": summary,
         }
 
-    async def get_location_analytics(self, location_id: int) -> dict[str, Any] | None:
+    async def get_location_analytics(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any] | None:
         location = await self.location_repo.get_by_id(location_id)
         if not location:
             return None
-        stats = await self.media_repo.get_location_analytics(location_id)
-        analyses = await self.media_repo.get_analyzed_media(location_id)
-        daily = await self.media_repo.get_daily_trend(location_id)
+        stats = await self.media_repo.get_location_analytics(location_id, from_date, to_date)
+        analyses = await self.media_repo.get_analyzed_media(location_id, from_date, to_date)
+        daily = await self.media_repo.get_daily_trend(location_id, from_date, to_date)
         age_agg: dict[str, float] = {}
         mood_agg: dict[str, float] = {}
         tag_counter: Counter[str] = Counter()
@@ -66,6 +71,38 @@ class AnalyticsService:
             "mood_distribution": mood_dist,
             "daily_trend": daily,
         }
+
+    async def compare_locations(
+        self,
+        location_ids: list[int],
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for loc_id in location_ids:
+            location = await self.location_repo.get_by_id(loc_id)
+            if not location:
+                continue
+            stats = await self.media_repo.get_location_analytics(loc_id, from_date, to_date)
+            analyses = await self.media_repo.get_analyzed_media(loc_id, from_date, to_date)
+            tag_counter: Counter[str] = Counter()
+            mood_counter: Counter[str] = Counter()
+            for a in analyses:
+                tag_counter.update(a.get("environment_tags", []))
+                mood_counter[a.get("dominant_mood", "neutral")] += 1
+            dominant_mood = mood_counter.most_common(1)[0][0] if mood_counter else None
+            results.append({
+                "location_id": location["id"],
+                "location_name": location["name"],
+                "category": location.get("category", "other"),
+                "total_media": stats["total_media"],
+                "analyzed_media": stats["analyzed_media"],
+                "avg_crowd_density": stats["avg_crowd_density"],
+                "peak_crowd_density": stats["peak_crowd_density"],
+                "dominant_mood": dominant_mood,
+                "top_tags": [t for t, _ in tag_counter.most_common(5)],
+            })
+        return results
 
     async def export_analytics_csv(self, location_id: int) -> str | None:
         location = await self.location_repo.get_by_id(location_id)
@@ -97,11 +134,16 @@ class AnalyticsService:
             writer.writerow([date, d["avg_density"], d["media_count"], dominant, top_tag])
         return buf.getvalue()
 
-    async def get_heatmap(self, location_id: int) -> dict[str, Any] | None:
+    async def get_heatmap(
+        self,
+        location_id: int,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> dict[str, Any] | None:
         location = await self.location_repo.get_by_id(location_id)
         if not location:
             return None
-        analyses = await self.media_repo.get_heatmap_data(location_id)
+        analyses = await self.media_repo.get_heatmap_data(location_id, from_date, to_date)
         if not analyses:
             return {
                 "location_id": location["id"],
