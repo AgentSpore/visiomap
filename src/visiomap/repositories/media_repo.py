@@ -58,6 +58,7 @@ class MediaRepo:
         cursor = await self.db.execute("SELECT 1 FROM media WHERE id = ?", (media_id,))
         if not await cursor.fetchone():
             return False
+        await self.db.execute("DELETE FROM media_annotations WHERE media_id = ?", (media_id,))
         await self.db.execute("DELETE FROM media WHERE id = ?", (media_id,))
         await self.db.commit()
         return True
@@ -225,6 +226,109 @@ class MediaRepo:
 
         cursor = await self.db.execute(query, params)
         return [self._to_dict(r) for r in await cursor.fetchall()]
+
+    # -- v1.5.0: Hourly Density ----------------------------------------------------
+
+    async def get_hourly_density(self, location_id: int) -> list[dict[str, Any]]:
+        """Aggregate crowd density by hour of day (from captured_at or submitted_at)."""
+        cursor = await self.db.execute(
+            """SELECT
+                 CAST(strftime('%%H', COALESCE(captured_at, submitted_at)) AS INTEGER) as hour,
+                 AVG(json_extract(analysis_json, '$.crowd_density')) as avg_density,
+                 COUNT(*) as media_count,
+                 AVG(json_extract(analysis_json, '$.crowd_count_estimate')) as avg_count,
+                 analysis_json
+               FROM media
+               WHERE location_id = ? AND analyzed = 1
+               GROUP BY hour
+               ORDER BY hour""",
+            (location_id,),
+        )
+        rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            # Get dominant mood for each hour bucket
+            mood_cursor = await self.db.execute(
+                """SELECT json_extract(analysis_json, '$.dominant_mood') as mood, COUNT(*) as cnt
+                   FROM media
+                   WHERE location_id = ? AND analyzed = 1
+                     AND CAST(strftime('%%H', COALESCE(captured_at, submitted_at)) AS INTEGER) = ?
+                   GROUP BY mood
+                   ORDER BY cnt DESC
+                   LIMIT 1""",
+                (location_id, r[0]),
+            )
+            mood_row = await mood_cursor.fetchone()
+            dominant_mood = mood_row[0] if mood_row else None
+
+            results.append({
+                "hour": r[0],
+                "avg_density": round(r[1], 2) if r[1] else 0.0,
+                "media_count": r[2],
+                "avg_crowd_count": int(r[3] or 0),
+                "dominant_mood": dominant_mood,
+            })
+        return results
+
+    # -- v1.5.0: Annotations -------------------------------------------------------
+
+    async def create_annotation(self, media_id: int, text: str, author: str) -> dict[str, Any] | None:
+        """Create a new annotation on a media item."""
+        media = await self.get_by_id(media_id)
+        if not media:
+            return None
+        cursor = await self.db.execute(
+            "INSERT INTO media_annotations (media_id, text, author) VALUES (?, ?, ?)",
+            (media_id, text, author),
+        )
+        await self.db.commit()
+        return await self.get_annotation(cursor.lastrowid)
+
+    async def get_annotation(self, annotation_id: int) -> dict[str, Any] | None:
+        cursor = await self.db.execute(
+            "SELECT * FROM media_annotations WHERE id = ?", (annotation_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "media_id": row["media_id"],
+            "text": row["text"],
+            "author": row["author"],
+            "created_at": row["created_at"],
+        }
+
+    async def list_annotations(self, media_id: int) -> list[dict[str, Any]] | None:
+        media = await self.get_by_id(media_id)
+        if not media:
+            return None
+        cursor = await self.db.execute(
+            "SELECT * FROM media_annotations WHERE media_id = ? ORDER BY created_at DESC",
+            (media_id,),
+        )
+        return [
+            {
+                "id": r["id"],
+                "media_id": r["media_id"],
+                "text": r["text"],
+                "author": r["author"],
+                "created_at": r["created_at"],
+            }
+            for r in await cursor.fetchall()
+        ]
+
+    async def delete_annotation(self, annotation_id: int) -> bool:
+        cursor = await self.db.execute("SELECT 1 FROM media_annotations WHERE id = ?", (annotation_id,))
+        if not await cursor.fetchone():
+            return False
+        await self.db.execute("DELETE FROM media_annotations WHERE id = ?", (annotation_id,))
+        await self.db.commit()
+        return True
+
+    async def count_annotations(self) -> int:
+        cursor = await self.db.execute("SELECT COUNT(*) FROM media_annotations")
+        return (await cursor.fetchone())[0]
 
     # -- Private --
 
