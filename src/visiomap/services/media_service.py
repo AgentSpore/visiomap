@@ -1,98 +1,83 @@
-from fastapi import HTTPException
-from typing import Optional
+from __future__ import annotations
 
-import aiosqlite
+import logging
+from typing import Any
 
-from visiomap.analyzer import analyze
-from visiomap.repositories import location_repo, media_repo
-from visiomap.schemas.media import (
-    MediaSubmit, BatchSubmit, MediaResponse, BatchResult, AnalysisResult,
-)
-from visiomap.config import settings
+from visiomap.analyzer.vision import VisionAnalyzer
+from visiomap.repositories.location_repo import LocationRepo
+from visiomap.repositories.media_repo import MediaRepo
 
-
-def _to_response(row: dict) -> MediaResponse:
-    return MediaResponse(
-        id=row["id"],
-        location_id=row["location_id"],
-        source_url=row["source_url"],
-        source_type=row["source_type"],
-        captured_at=row["captured_at"],
-        tags=row["tags"],
-        analyzed=row["analyzed"],
-        analysis=row.get("analysis"),
-        submitted_at=row["submitted_at"],
-    )
+logger = logging.getLogger(__name__)
 
 
-async def submit(db: aiosqlite.Connection, body: MediaSubmit) -> MediaResponse:
-    if not await location_repo.exists(db, body.location_id):
-        raise HTTPException(404, "Location not found")
-    row = await media_repo.create(db, body.model_dump())
-    return _to_response(row)
+class MediaService:
+    def __init__(
+        self,
+        media_repo: MediaRepo,
+        location_repo: LocationRepo,
+        analyzer: VisionAnalyzer,
+    ) -> None:
+        self.media_repo = media_repo
+        self.location_repo = location_repo
+        self.analyzer = analyzer
 
+    async def submit(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        if not await self.location_repo.exists(data["location_id"]):
+            return None
+        return await self.media_repo.create(data)
 
-async def submit_batch(db: aiosqlite.Connection, body: BatchSubmit) -> BatchResult:
-    if len(body.items) > settings.max_batch_size:
-        raise HTTPException(422, f"Batch size exceeds limit of {settings.max_batch_size}")
+    async def submit_batch(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        results = []
+        for item in items:
+            if not await self.location_repo.exists(item["location_id"]):
+                continue
+            media = await self.media_repo.create(item)
+            results.append(media)
+        return results
 
-    results: list[MediaResponse] = []
-    failed = 0
-    for item in body.items:
-        if not await location_repo.exists(db, item.location_id):
-            failed += 1
-            continue
-        row = await media_repo.create(db, item.model_dump())
-        results.append(_to_response(row))
+    async def get(self, media_id: int) -> dict[str, Any] | None:
+        return await self.media_repo.get_by_id(media_id)
 
-    return BatchResult(submitted=len(results), failed=failed, items=results)
+    async def list_all(
+        self,
+        location_id: int | None = None,
+        analyzed: bool | None = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return await self.media_repo.list_all(location_id, analyzed, limit, offset)
 
+    async def delete(self, media_id: int) -> bool:
+        return await self.media_repo.delete(media_id)
 
-async def get_or_404(db: aiosqlite.Connection, media_id: int) -> MediaResponse:
-    row = await media_repo.get_by_id(db, media_id)
-    if not row:
-        raise HTTPException(404, "Media not found")
-    return _to_response(row)
-
-
-async def list_media(
-    db: aiosqlite.Connection,
-    location_id: Optional[int] = None,
-    analyzed: Optional[bool] = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> list[MediaResponse]:
-    if location_id is not None:
-        if not await location_repo.exists(db, location_id):
-            raise HTTPException(404, "Location not found")
-        rows = await media_repo.list_by_location(db, location_id, analyzed, limit, offset)
-    else:
-        rows = await media_repo.list_all(db, analyzed, limit)
-    return [_to_response(r) for r in rows]
-
-
-async def run_analysis(db: aiosqlite.Connection, media_id: int) -> MediaResponse:
-    row = await media_repo.get_by_id(db, media_id)
-    if not row:
-        raise HTTPException(404, "Media not found")
-    if row["analyzed"]:
-        return _to_response(row)  # idempotent — return existing result
-    result = await analyze(row["source_url"])
-    updated = await media_repo.save_analysis(db, media_id, result)
-    return _to_response(updated)
-
-
-async def run_batch_analysis(
-    db: aiosqlite.Connection, location_id: Optional[int] = None
-) -> dict:
-    """Analyze all unanalyzed media items."""
-    pending = await media_repo.get_unanalyzed(db, location_id)
-    processed, failed = 0, 0
-    for item in pending:
+    async def analyze_one(self, media_id: int) -> dict[str, Any] | None:
+        media = await self.media_repo.get_by_id(media_id)
+        if not media:
+            return None
         try:
-            result = await analyze(item["source_url"])
-            await media_repo.save_analysis(db, item["id"], result)
-            processed += 1
-        except Exception:
-            failed += 1
-    return {"processed": processed, "failed": failed, "total_pending": len(pending)}
+            result = await self.analyzer.analyze(media["source_url"])
+            await self.media_repo.save_analysis(media_id, result)
+            return await self.media_repo.get_by_id(media_id)
+        except Exception as e:
+            logger.error("Analysis failed for media %d: %s", media_id, e)
+            raise
+
+    async def analyze_all(
+        self, location_id: int | None = None
+    ) -> dict[str, Any]:
+        pending = await self.media_repo.get_pending(location_id)
+        analyzed = 0
+        failed = 0
+        errors: list[str] = []
+
+        for media in pending:
+            try:
+                result = await self.analyzer.analyze(media["source_url"])
+                await self.media_repo.save_analysis(media["id"], result)
+                analyzed += 1
+            except Exception as e:
+                failed += 1
+                errors.append(f"media {media['id']}: {e}")
+                logger.error("Analysis failed for media %d: %s", media["id"], e)
+
+        return {"analyzed": analyzed, "failed": failed, "errors": errors}
