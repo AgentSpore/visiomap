@@ -11,6 +11,8 @@ from visiomap.schemas.media import (
     MediaBatchResponse,
     MediaCreate,
     MediaResponse,
+    AnnotationCreate,
+    AnnotationResponse,
 )
 from visiomap.services import MediaService
 
@@ -99,3 +101,29 @@ async def analyze_all(
     svc: MediaService = Depends(_service),
 ):
     return await svc.analyze_all(location_id)
+
+
+# -- v1.5.0: Media Annotations ------------------------------------------------
+
+@router.post("/{media_id}/annotations", response_model=AnnotationResponse, status_code=201)
+async def add_annotation(media_id: int, body: AnnotationCreate, svc: MediaService = Depends(_service)):
+    """Add a reviewer annotation to a media item."""
+    result = await svc.create_annotation(media_id, body.text, body.author)
+    if not result:
+        raise HTTPException(404, "Media not found")
+    return result
+
+
+@router.get("/{media_id}/annotations", response_model=list[AnnotationResponse])
+async def get_annotations(media_id: int, svc: MediaService = Depends(_service)):
+    """Get all annotations for a media item, newest first."""
+    result = await svc.list_annotations(media_id)
+    if result is None:
+        raise HTTPException(404, "Media not found")
+    return result
+
+
+@router.delete("/annotations/{annotation_id}", status_code=204)
+async def remove_annotation(annotation_id: int, svc: MediaService = Depends(_service)):
+    if not await svc.delete_annotation(annotation_id):
+        raise HTTPException(404, "Annotation not found")
