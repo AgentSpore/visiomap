@@ -15,8 +15,8 @@ class LocationService:
     async def get(self, location_id: int) -> dict[str, Any] | None:
         return await self.repo.get_by_id(location_id)
 
-    async def list_all(self) -> list[dict[str, Any]]:
-        return await self.repo.list_all()
+    async def list_all(self, category: str | None = None) -> list[dict[str, Any]]:
+        return await self.repo.list_all(category=category)
 
     async def update(self, location_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
         return await self.repo.update(location_id, data)
