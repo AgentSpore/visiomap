@@ -1,113 +1,102 @@
-"""Smoke tests for visiomap — validates layered architecture without external deps."""
+#!/usr/bin/env python3
+"""Smoke test: boots the app, creates data, runs analysis, checks heatmap."""
+
 import asyncio
-import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-os.environ["DB_PATH"] = "visiomap_test.db"
+import httpx
 
-from visiomap.config import settings
-settings.db_path = "visiomap_test.db"
-
-import aiosqlite
-from visiomap.database import init_db
-from visiomap.repositories import location_repo, media_repo
-from visiomap.analyzer.vision import _mock as mock_analyze
-from visiomap.schemas.media import MediaSubmit
+BASE = "http://127.0.0.1:8000"
+passed = 0
+failed = 0
 
 
-async def run():
-    await init_db()
+def check(name: str, condition: bool, detail: str = ""):
+    global passed, failed
+    if condition:
+        passed += 1
+        print(f"  OK  {name}")
+    else:
+        failed += 1
+        print(f"  FAIL  {name} — {detail}")
 
-    async with aiosqlite.connect(settings.db_path) as db:
-        db.row_factory = aiosqlite.Row
 
-        # 1. Create location
-        loc = await location_repo.create(db, {
-            "name": "Red Square", "lat": 55.7539, "lng": 37.6208,
-            "radius_m": 300, "description": "Moscow city center",
+async def main():
+    async with httpx.AsyncClient(base_url=BASE, timeout=30) as c:
+        # Health
+        r = await c.get("/health")
+        check("GET /health", r.status_code == 200 and r.json()["version"] == "1.0.0", str(r.text))
+
+        # Create location
+        r = await c.post("/locations", json={
+            "name": "Times Square", "lat": 40.758, "lng": -73.985, "radius_m": 400
         })
-        assert loc["id"] == 1
-        assert loc["name"] == "Red Square"
-        print("[PASS] create location")
+        check("POST /locations", r.status_code == 201, str(r.text))
+        loc_id = r.json()["id"]
 
-        # 2. Duplicate name → unique constraint
-        try:
-            await location_repo.create(db, {"name": "Red Square", "lat": 0, "lng": 0, "radius_m": 100})
-            assert False, "Should have raised"
-        except Exception as e:
-            assert "UNIQUE" in str(e)
-        print("[PASS] unique location name constraint")
+        # List locations
+        r = await c.get("/locations")
+        check("GET /locations", r.status_code == 200 and len(r.json()) >= 1)
 
-        # 3. Submit media
-        m = await media_repo.create(db, {
-            "location_id": 1,
-            "source_url": "https://example.com/photo1.jpg",
-            "source_type": "photo",
-            "tags": ["test", "outdoor"],
+        # Get single location
+        r = await c.get(f"/locations/{loc_id}")
+        check("GET /locations/{id}", r.status_code == 200 and r.json()["name"] == "Times Square")
+
+        # Submit media batch
+        r = await c.post("/media/batch", json={"items": [
+            {"location_id": loc_id, "source_url": "https://example.com/crowd1.jpg", "tags": ["outdoor"]},
+            {"location_id": loc_id, "source_url": "https://example.com/crowd2.jpg", "tags": ["evening"]},
+            {"location_id": loc_id, "source_url": "https://example.com/crowd3.jpg", "tags": ["market"]},
+        ]})
+        check("POST /media/batch", r.status_code == 201 and r.json()["created"] == 3, str(r.text))
+
+        # Single media submit
+        r = await c.post("/media", json={
+            "location_id": loc_id, "source_url": "https://example.com/single.jpg"
         })
-        assert m["id"] == 1
-        assert not m["analyzed"]
-        print("[PASS] submit media")
+        check("POST /media", r.status_code == 201 and r.json()["analyzed"] is False)
 
-        # 4. Mock analyzer
-        result = mock_analyze("https://example.com/photo1.jpg")
-        assert 0 <= result.crowd_density <= 10
-        assert result.analysis_source == "mock"
-        assert sum(result.age_groups.values()) > 0
-        assert sum(result.mood.values()) > 0
-        print("[PASS] mock analyzer (deterministic)")
+        # List media
+        r = await c.get("/media", params={"location_id": loc_id})
+        check("GET /media", r.status_code == 200 and len(r.json()) == 4)
 
-        # 5. Same URL = same result
-        r2 = mock_analyze("https://example.com/photo1.jpg")
-        assert r2.crowd_density == result.crowd_density
-        print("[PASS] mock analyzer deterministic consistency")
+        # Analyze all
+        r = await c.post("/media/analyze/all", params={"location_id": loc_id})
+        check("POST /media/analyze/all", r.status_code == 200 and r.json()["analyzed"] == 4, str(r.text))
+        check("  no failures", r.json()["failed"] == 0)
 
-        # 6. Save analysis
-        updated = await media_repo.save_analysis(db, 1, result)
-        assert updated["analyzed"]
-        assert updated["analysis"] is not None
-        assert updated["analysis"].crowd_density == result.crowd_density
-        print("[PASS] save analysis to repo")
+        # Heatmap
+        r = await c.get(f"/locations/{loc_id}/heatmap")
+        heat = r.json()
+        check("GET /locations/{id}/heatmap", r.status_code == 200 and heat["total_samples"] == 4)
+        check("  has points", len(heat["points"]) == 4)
 
-        # 7. Location stats update
-        loc2 = await location_repo.get_by_id(db, 1)
-        assert loc2["media_count"] == 1
-        assert loc2["analyzed_count"] == 1
-        assert loc2["avg_crowd_density"] is not None
-        print("[PASS] location aggregate stats")
+        # Analytics
+        r = await c.get(f"/locations/{loc_id}/analytics")
+        a = r.json()
+        check("GET /locations/{id}/analytics", r.status_code == 200)
+        check("  has density", a["avg_crowd_density"] is not None and a["avg_crowd_density"] > 0)
+        check("  has mood", a["dominant_mood"] is not None)
+        check("  has age groups", a["age_distribution"] is not None)
+        check("  has env tags", len(a["top_environment_tags"]) > 0)
 
-        # 8. Heatmap data
-        raw = await media_repo.heatmap_data(db, 1)
-        assert len(raw) == 1
-        assert raw[0]["crowd_density"] == result.crowd_density
-        print("[PASS] heatmap data query")
+        # Overview
+        r = await c.get("/analytics/overview")
+        check("GET /analytics/overview", r.status_code == 200 and r.json()["total_locations"] >= 1)
 
-        # 9. Analytics data
-        analytics = await media_repo.location_analytics_data(db, 1)
-        assert analytics["total"] == 1
-        assert analytics["analyzed"] == 1
-        assert analytics["avg_density"] is not None
-        print("[PASS] analytics data query")
+        # Map page
+        r = await c.get("/map")
+        check("GET /map", r.status_code == 200 and "visiomap" in r.text)
 
-        # 10. Overview
-        overview = await media_repo.overview_data(db)
-        assert overview["total_media"] == 1
-        assert overview["analyzed_media"] == 1
-        print("[PASS] overview data query")
+        # Cleanup
+        r = await c.delete(f"/locations/{loc_id}")
+        check("DELETE /locations/{id}", r.status_code == 204)
 
-        # 11. Delete location
-        ok = await location_repo.delete(db, 1)
-        assert ok
-        assert await location_repo.get_by_id(db, 1) is None
-        print("[PASS] delete location")
-
-    print("\n=== All smoke tests passed ===")
+    print(f"\n{'='*40}")
+    print(f"  {passed} passed, {failed} failed")
+    print(f"{'='*40}")
+    sys.exit(1 if failed else 0)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(run())
-    finally:
-        if os.path.exists("visiomap_test.db"):
-            os.remove("visiomap_test.db")
+    asyncio.run(main())
