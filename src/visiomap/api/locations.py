@@ -1,39 +1,48 @@
-from fastapi import APIRouter, Depends, status
+from __future__ import annotations
 
-import aiosqlite
+from fastapi import APIRouter, Depends, HTTPException
 
 from visiomap.database import get_db
+from visiomap.repositories import LocationRepo
 from visiomap.schemas.location import LocationCreate, LocationUpdate, LocationResponse
-from visiomap.services import location_service
+from visiomap.services import LocationService
 
-router = APIRouter(prefix="/locations", tags=["Locations"])
+router = APIRouter(prefix="/locations", tags=["locations"])
 
 
-@router.post("", response_model=LocationResponse, status_code=status.HTTP_201_CREATED)
-async def create_location(body: LocationCreate, db=Depends(get_db)):
-    """Register a new location to monitor."""
-    return await location_service.create(db, body)
+def _service(db=Depends(get_db)) -> LocationService:
+    return LocationService(LocationRepo(db))
+
+
+@router.post("", response_model=LocationResponse, status_code=201)
+async def create_location(body: LocationCreate, svc: LocationService = Depends(_service)):
+    return await svc.create(body.model_dump())
 
 
 @router.get("", response_model=list[LocationResponse])
-async def list_locations(db=Depends(get_db)):
-    """List all monitored locations with aggregate stats."""
-    return await location_service.list_all(db)
+async def list_locations(svc: LocationService = Depends(_service)):
+    return await svc.list_all()
 
 
 @router.get("/{location_id}", response_model=LocationResponse)
-async def get_location(location_id: int, db=Depends(get_db)):
-    """Get location detail with media count and average crowd density."""
-    return await location_service.get_or_404(db, location_id)
+async def get_location(location_id: int, svc: LocationService = Depends(_service)):
+    loc = await svc.get(location_id)
+    if not loc:
+        raise HTTPException(404, "Location not found")
+    return loc
 
 
 @router.patch("/{location_id}", response_model=LocationResponse)
-async def update_location(location_id: int, body: LocationUpdate, db=Depends(get_db)):
-    """Update location name, radius, or description."""
-    return await location_service.update(db, location_id, body)
+async def update_location(
+    location_id: int, body: LocationUpdate, svc: LocationService = Depends(_service)
+):
+    result = await svc.update(location_id, body.model_dump(exclude_unset=True))
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
 
 
-@router.delete("/{location_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_location(location_id: int, db=Depends(get_db)):
-    """Delete a location (media records are preserved)."""
-    await location_service.delete(db, location_id)
+@router.delete("/{location_id}", status_code=204)
+async def delete_location(location_id: int, svc: LocationService = Depends(_service)):
+    if not await svc.delete(location_id):
+        raise HTTPException(404, "Location not found")
