@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS locations (
     radius_m    INTEGER NOT NULL DEFAULT 500 CHECK (radius_m BETWEEN 50 AND 50000),
     category    TEXT    NOT NULL DEFAULT 'other',
     description TEXT,
+    tags        TEXT    NOT NULL DEFAULT '[]',
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -52,12 +53,27 @@ CREATE TABLE IF NOT EXISTS geofences (
     polygon     TEXT    NOT NULL,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS media_annotations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id    INTEGER NOT NULL REFERENCES media(id) ON DELETE CASCADE,
+    text        TEXT    NOT NULL,
+    author      TEXT    NOT NULL DEFAULT 'reviewer',
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_annotations_media ON media_annotations(media_id);
 """
 
 
 async def init_db() -> None:
     async with aiosqlite.connect(settings.database_url) as db:
         await db.executescript(_SCHEMA)
+        # v1.5.0: ensure tags column on locations
+        cursor = await db.execute("PRAGMA table_info(locations)")
+        cols = [r[1] for r in await cursor.fetchall()]
+        if "tags" not in cols:
+            await db.execute("ALTER TABLE locations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
         await db.commit()
 
 
