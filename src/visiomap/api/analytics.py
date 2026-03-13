@@ -18,6 +18,8 @@ from visiomap.schemas.analytics import (
     HealthScoreResponse,
     AnomalyResponse,
     PeakHoursResponse,
+    ForecastResponse,
+    CategoryBenchmarkResponse,
 )
 from visiomap.services import AnalyticsService
 from visiomap.services.alert_service import AlertService
@@ -120,6 +122,40 @@ async def peak_hours(
 ):
     """Crowd density patterns by hour of day — identify peak and off-peak periods."""
     result = await svc.get_peak_hours(location_id)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
+# -- v1.6.0: Crowd Forecast ---------------------------------------------------
+
+@router.get("/locations/{location_id}/analytics/forecast", response_model=ForecastResponse)
+async def crowd_forecast(
+    location_id: int,
+    date: str | None = Query(
+        None,
+        description="Target forecast date (YYYY-MM-DD). Defaults to tomorrow.",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
+    ),
+    svc: AnalyticsService = Depends(_service),
+):
+    """Predict crowd density for each hour of a future date based on historical
+    day-of-week and hour patterns."""
+    result = await svc.get_crowd_forecast(location_id, target_date=date)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
+# -- v1.6.0: Category Benchmarks ----------------------------------------------
+
+@router.get("/locations/{location_id}/analytics/benchmark", response_model=CategoryBenchmarkResponse)
+async def category_benchmark(
+    location_id: int,
+    svc: AnalyticsService = Depends(_service),
+):
+    """Compare a location against average metrics for all locations in the same category."""
+    result = await svc.get_category_benchmark(location_id)
     if not result:
         raise HTTPException(404, "Location not found")
     return result

@@ -330,6 +330,79 @@ class MediaRepo:
         cursor = await self.db.execute("SELECT COUNT(*) FROM media_annotations")
         return (await cursor.fetchone())[0]
 
+    # -- v1.6.0: Density by Weekday/Hour -------------------------------------------
+
+    async def get_density_by_weekday_hour(
+        self, location_id: int, weekday: int,
+    ) -> list[dict[str, Any]]:
+        """Aggregate crowd density by hour for a specific weekday (0=Sunday .. 6=Saturday).
+
+        Uses SQLite strftime('%w') which returns 0=Sunday, 1=Monday, ... 6=Saturday.
+        Returns rows of (hour, avg_density, sample_count).
+        """
+        cursor = await self.db.execute(
+            """SELECT
+                 CAST(strftime('%%H', COALESCE(captured_at, submitted_at)) AS INTEGER) AS hour,
+                 AVG(json_extract(analysis_json, '$.crowd_density')) AS avg_density,
+                 COUNT(*) AS sample_count
+               FROM media
+               WHERE location_id = ? AND analyzed = 1
+                 AND CAST(strftime('%%w', COALESCE(captured_at, submitted_at)) AS INTEGER) = ?
+               GROUP BY hour
+               ORDER BY hour""",
+            (location_id, weekday),
+        )
+        return [
+            {
+                "hour": r[0],
+                "avg_density": round(r[1], 2) if r[1] else 0.0,
+                "sample_count": r[2],
+            }
+            for r in await cursor.fetchall()
+        ]
+
+    # -- v1.6.0: Category-level aggregation ----------------------------------------
+
+    async def get_category_stats(self, category: str) -> list[dict[str, Any]]:
+        """Get avg_density, media_count, analyzed_ratio per location in a category.
+
+        Joins media with locations table to filter by category.
+        Returns one row per location: (location_id, avg_density, media_count, analyzed_ratio).
+        """
+        cursor = await self.db.execute(
+            """SELECT
+                 m.location_id,
+                 AVG(CASE WHEN m.analyzed = 1
+                     THEN json_extract(m.analysis_json, '$.crowd_density') END) AS avg_density,
+                 COUNT(*) AS media_count,
+                 CAST(SUM(CASE WHEN m.analyzed = 1 THEN 1 ELSE 0 END) AS REAL)
+                     / MAX(COUNT(*), 1) AS analyzed_ratio
+               FROM media m
+               JOIN locations l ON l.id = m.location_id
+               WHERE l.category = ?
+               GROUP BY m.location_id""",
+            (category,),
+        )
+        return [
+            {
+                "location_id": r[0],
+                "avg_density": round(r[1], 2) if r[1] else 0.0,
+                "media_count": r[2],
+                "analyzed_ratio": round(r[3], 4) if r[3] else 0.0,
+            }
+            for r in await cursor.fetchall()
+        ]
+
+    # -- v1.6.0: Update tags -------------------------------------------------------
+
+    async def update_tags(self, media_id: int, tags: list[str]) -> None:
+        """Overwrite the tags JSON array for a media item."""
+        await self.db.execute(
+            "UPDATE media SET tags = ? WHERE id = ?",
+            (json.dumps(tags), media_id),
+        )
+        await self.db.commit()
+
     # -- Private --
 
     @staticmethod

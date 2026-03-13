@@ -13,6 +13,7 @@ from visiomap.schemas.media import (
     MediaResponse,
     AnnotationCreate,
     AnnotationResponse,
+    TagSuggestionsResponse,
 )
 from visiomap.services import MediaService
 
@@ -127,3 +128,24 @@ async def get_annotations(media_id: int, svc: MediaService = Depends(_service)):
 async def remove_annotation(annotation_id: int, svc: MediaService = Depends(_service)):
     if not await svc.delete_annotation(annotation_id):
         raise HTTPException(404, "Annotation not found")
+
+
+# -- v1.6.0: Media Auto-Tag Suggestions ---------------------------------------
+
+@router.get("/{media_id}/tag-suggestions", response_model=TagSuggestionsResponse)
+async def tag_suggestions(media_id: int, svc: MediaService = Depends(_service)):
+    """Suggest tags for a media item based on its analysis results (environment_tags,
+    weather, mood, time_of_day). Already-applied tags are excluded."""
+    result = await svc.suggest_tags(media_id)
+    if result is None:
+        raise HTTPException(404, "Media not found")
+    return result
+
+
+@router.post("/{media_id}/apply-suggestions", response_model=MediaResponse)
+async def apply_tag_suggestions(media_id: int, svc: MediaService = Depends(_service)):
+    """Apply high-confidence tag suggestions (>= 0.7) to the media's tags field."""
+    result = await svc.apply_tag_suggestions(media_id)
+    if result is None:
+        raise HTTPException(404, "Media not found")
+    return result

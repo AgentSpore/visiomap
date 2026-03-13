@@ -28,6 +28,10 @@ __all__ = [
     "AnomalyResponse",
     "PeakHourEntry",
     "PeakHoursResponse",
+    "ForecastPoint",
+    "ForecastResponse",
+    "CategoryBenchmarkEntry",
+    "CategoryBenchmarkResponse",
 ]
 
 
@@ -284,3 +288,40 @@ class PeakHoursResponse(BaseModel):
     peak_density: float
     quietest_density: float
     total_analyzed: int
+
+
+# -- v1.6.0: Crowd Forecast ---------------------------------------------------
+
+class ForecastPoint(BaseModel):
+    hour: int = Field(..., ge=0, le=23, description="Hour of day (0-23)")
+    predicted_density: float
+    confidence: float = Field(..., ge=0, le=1)
+    based_on_samples: int
+
+
+class ForecastResponse(BaseModel):
+    location_id: int
+    location_name: str
+    forecast_date: str
+    points: list[ForecastPoint]
+    avg_predicted_density: float
+    peak_hour: int
+    peak_density: float
+
+
+# -- v1.6.0: Category Benchmarks ----------------------------------------------
+
+class CategoryBenchmarkEntry(BaseModel):
+    metric: str
+    location_value: float
+    category_avg: float
+    percentile: float
+    above_avg: bool
+
+
+class CategoryBenchmarkResponse(BaseModel):
+    location_id: int
+    location_name: str
+    category: str
+    benchmarks: list[CategoryBenchmarkEntry]
+    overall_percentile: float

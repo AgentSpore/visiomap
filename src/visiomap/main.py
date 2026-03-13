@@ -29,9 +29,11 @@ app = FastAPI(
         "location health scores, cross-location media tag search, "
         "crowd density anomaly detection, "
         "location tags for filtering, media annotations for review workflows, "
-        "and peak hours analysis for crowd density patterns."
+        "peak hours analysis for crowd density patterns, "
+        "crowd forecast predictions, category benchmarks, "
+        "and media auto-tag suggestions."
     ),
-    version="1.5.0",
+    version="1.6.0",
     lifespan=lifespan,
 )
 
@@ -45,7 +47,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.5.0"}
+    return {"status": "ok", "version": "1.6.0"}
 
 
 @app.get("/map")
