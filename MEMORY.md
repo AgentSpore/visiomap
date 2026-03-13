@@ -1,26 +1,25 @@
-# visiomap — Development Log (MEMORY.md)
+# VisioMap — Development Log
+
+## v1.3.0 (2026-03-13)
+- Geofencing: polygon zones with ray-casting containment check, locations-inside count
+- Location clustering: haversine-based grouping with configurable radius
+- Score trend: daily density with moving average window and direction indicator
+- New table: geofences
+- New files: api/geofences.py, services/geofence_service.py
+
+## v1.2.0
+- Density alerts with webhook notifications
+- Location comparison across multiple locations
+- Time-window filtering on analytics
+- CSV analytics export
+
+## v1.1.0
+- Analytics overview dashboard
+- Daily trend tracking
+- Location categories (mall, park, street, venue, transit, beach)
 
 ## v1.0.0
-- Locations CRUD (name, lat/lng, radius)
-- Media upload with source type (photo/video/screenshot)
-- AI vision analysis (crowd density, demographics, mood, environment tags)
-- Heatmap generation with golden-angle point distribution
-- Location analytics (daily trend, age/mood distributions)
-- Analytics overview with busiest location
-- Static map page
-
-## v1.1.0 (2026-03-13)
-- Location categories (mall/park/street/venue/transit/beach/other)
-- Category filtering on list endpoint
-- Density alerts with webhook notifications
-- Alert CRUD (create/list/get/delete)
-- check_and_fire for auto-triggering when density exceeds threshold
-- CSV export for per-location analytics
-- DEEP.md + MEMORY.md added
-
-## v1.2.0 (2026-03-13)
-- **Location comparison**: GET /analytics/compare?ids=1,2,3 — side-by-side stats for 2-10 locations
-- **Time-window filtering**: from_date/to_date on analytics, heatmap endpoints; SQL-level filtering
-- **Alert updates**: PATCH /alerts/{id} — toggle active state, update threshold/label/webhook
-- Media repo methods extended with from_date/to_date params
-- Analytics service passes time filters through to repo layer
+- Location CRUD with lat/lng and radius
+- Media upload and management
+- AI-powered crowd density analysis
+- Heatmap generation

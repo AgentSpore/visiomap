@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS density_alerts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_alerts_location ON density_alerts(location_id);
+
+CREATE TABLE IF NOT EXISTS geofences (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    description TEXT,
+    polygon     TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 

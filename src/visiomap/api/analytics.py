@@ -13,6 +13,8 @@ from visiomap.schemas.analytics import (
     AlertUpdate,
     AlertResponse,
     ComparisonResponse,
+    ClusterResponse,
+    ScoreTrendResponse,
 )
 from visiomap.services import AnalyticsService
 from visiomap.services.alert_service import AlertService
@@ -65,6 +67,18 @@ async def export_analytics_csv(location_id: int, svc: AnalyticsService = Depends
     )
 
 
+@router.get("/locations/{location_id}/analytics/trend", response_model=ScoreTrendResponse)
+async def score_trend(
+    location_id: int,
+    window: int = Query(7, ge=2, le=30, description="Moving average window in days"),
+    svc: AnalyticsService = Depends(_service),
+):
+    result = await svc.get_score_trend(location_id, window=window)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
 @router.get("/analytics/overview", response_model=OverviewResponse)
 async def get_overview(svc: AnalyticsService = Depends(_service)):
     return await svc.get_overview()
@@ -87,6 +101,14 @@ async def compare_locations(
         raise HTTPException(400, "Maximum 10 locations per comparison")
     entries = await svc.compare_locations(location_ids, from_date, to_date)
     return ComparisonResponse(locations=entries, from_date=from_date, to_date=to_date)
+
+
+@router.get("/analytics/clusters", response_model=ClusterResponse)
+async def cluster_locations(
+    radius_km: float = Query(5.0, ge=0.5, le=100, description="Clustering radius in km"),
+    svc: AnalyticsService = Depends(_service),
+):
+    return await svc.cluster_locations(radius_km=radius_km)
 
 
 # -- Density Alerts ------------------------------------------------------------
