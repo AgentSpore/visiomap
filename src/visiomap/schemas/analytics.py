@@ -26,6 +26,8 @@ __all__ = [
     "HealthFactor",
     "AnomalyEntry",
     "AnomalyResponse",
+    "PeakHourEntry",
+    "PeakHoursResponse",
 ]
 
 
@@ -261,3 +263,24 @@ class AnomalyResponse(BaseModel):
     total_anomalies: int
     baseline_avg_daily: float
     analysis_period_days: int
+
+
+# -- v1.5.0: Peak Hours Analysis -----------------------------------------------
+
+class PeakHourEntry(BaseModel):
+    hour: int = Field(..., ge=0, le=23, description="Hour of day (0-23)")
+    avg_density: float
+    media_count: int
+    avg_crowd_count: int
+    dominant_mood: str | None
+
+
+class PeakHoursResponse(BaseModel):
+    location_id: int
+    location_name: str
+    hours: list[PeakHourEntry]
+    peak_hour: int
+    quietest_hour: int
+    peak_density: float
+    quietest_density: float
+    total_analyzed: int
