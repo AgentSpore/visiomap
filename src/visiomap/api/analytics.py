@@ -10,7 +10,9 @@ from visiomap.schemas.analytics import (
     LocationAnalytics,
     OverviewResponse,
     AlertCreate,
+    AlertUpdate,
     AlertResponse,
+    ComparisonResponse,
 )
 from visiomap.services import AnalyticsService
 from visiomap.services.alert_service import AlertService
@@ -27,16 +29,26 @@ def _alert_svc(db=Depends(get_db)) -> AlertService:
 
 
 @router.get("/locations/{location_id}/heatmap", response_model=HeatmapResponse)
-async def get_heatmap(location_id: int, svc: AnalyticsService = Depends(_service)):
-    result = await svc.get_heatmap(location_id)
+async def get_heatmap(
+    location_id: int,
+    from_date: str | None = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    to_date: str | None = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    svc: AnalyticsService = Depends(_service),
+):
+    result = await svc.get_heatmap(location_id, from_date, to_date)
     if not result:
         raise HTTPException(404, "Location not found")
     return result
 
 
 @router.get("/locations/{location_id}/analytics", response_model=LocationAnalytics)
-async def get_analytics(location_id: int, svc: AnalyticsService = Depends(_service)):
-    result = await svc.get_location_analytics(location_id)
+async def get_analytics(
+    location_id: int,
+    from_date: str | None = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    to_date: str | None = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    svc: AnalyticsService = Depends(_service),
+):
+    result = await svc.get_location_analytics(location_id, from_date, to_date)
     if not result:
         raise HTTPException(404, "Location not found")
     return result
@@ -56,6 +68,25 @@ async def export_analytics_csv(location_id: int, svc: AnalyticsService = Depends
 @router.get("/analytics/overview", response_model=OverviewResponse)
 async def get_overview(svc: AnalyticsService = Depends(_service)):
     return await svc.get_overview()
+
+
+@router.get("/analytics/compare", response_model=ComparisonResponse)
+async def compare_locations(
+    ids: str = Query(..., description="Comma-separated location IDs (e.g. 1,2,3)"),
+    from_date: str | None = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    to_date: str | None = Query(None, description="Filter to date (YYYY-MM-DD)"),
+    svc: AnalyticsService = Depends(_service),
+):
+    try:
+        location_ids = [int(x.strip()) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "ids must be comma-separated integers")
+    if len(location_ids) < 2:
+        raise HTTPException(400, "Provide at least 2 location IDs to compare")
+    if len(location_ids) > 10:
+        raise HTTPException(400, "Maximum 10 locations per comparison")
+    entries = await svc.compare_locations(location_ids, from_date, to_date)
+    return ComparisonResponse(locations=entries, from_date=from_date, to_date=to_date)
 
 
 # -- Density Alerts ------------------------------------------------------------
@@ -79,6 +110,18 @@ async def get_alert(alert_id: int, svc: AlertService = Depends(_alert_svc)):
     if not alert:
         raise HTTPException(404, "Alert not found")
     return alert
+
+
+@router.patch("/alerts/{alert_id}", response_model=AlertResponse)
+async def update_alert(
+    alert_id: int,
+    body: AlertUpdate,
+    svc: AlertService = Depends(_alert_svc),
+):
+    result = await svc.update(alert_id, body.model_dump(exclude_unset=True))
+    if not result:
+        raise HTTPException(404, "Alert not found")
+    return result
 
 
 @router.delete("/alerts/{alert_id}", status_code=204)
