@@ -81,3 +81,17 @@ class MediaService:
                 logger.error("Analysis failed for media %d: %s", media["id"], e)
 
         return {"analyzed": analyzed, "failed": failed, "errors": errors}
+
+    # -- v1.4.0: Media Search by Tags ---------------------------------------------
+
+    async def search_by_tags(
+        self,
+        tags: list[str],
+        source_type: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return await self.media_repo.search_by_tags(
+            tags, source_type, from_date, to_date, limit,
+        )
