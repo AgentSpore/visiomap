@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS locations (
     lat         REAL    NOT NULL CHECK (lat BETWEEN -90 AND 90),
     lng         REAL    NOT NULL CHECK (lng BETWEEN -180 AND 180),
     radius_m    INTEGER NOT NULL DEFAULT 500 CHECK (radius_m BETWEEN 50 AND 50000),
+    category    TEXT    NOT NULL DEFAULT 'other',
     description TEXT,
     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -29,6 +30,20 @@ CREATE TABLE IF NOT EXISTS media (
 
 CREATE INDEX IF NOT EXISTS idx_media_location ON media(location_id);
 CREATE INDEX IF NOT EXISTS idx_media_analyzed  ON media(analyzed);
+
+CREATE TABLE IF NOT EXISTS density_alerts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    location_id   INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    threshold     REAL    NOT NULL CHECK (threshold BETWEEN 0 AND 100),
+    webhook_url   TEXT    NOT NULL,
+    label         TEXT,
+    fired_count   INTEGER NOT NULL DEFAULT 0,
+    last_fired_at TEXT,
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerts_location ON density_alerts(location_id);
 """
 
 

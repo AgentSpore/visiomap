@@ -1,23 +1,18 @@
 # visiomap — Development Log
 
-## v1.0.0 — Initial Release (2026-03-13)
+## v1.1.0 (2026-03-13)
+- **Location categories**: `category` field (mall/park/street/venue/transit/beach/other) with filter
+- **GET /locations?category=** filter endpoint
+- **GET /locations/{id}/analytics/export/csv** — daily trend CSV with mood and tag data
+- **Density alerts**: POST/GET/DELETE /alerts, threshold-based with webhook_url
+- AlertService.check_and_fire() — auto-trigger when crowd density exceeds threshold
+- LocationSummary now includes category field
+- Updated DEEP.md with alert architecture
+- Bumped v1.1.0
 
-### Created
-- Full layered architecture: api/ → services/ → repositories/ → schemas/
-- VisionAnalyzer with OpenAI gpt-4o backend + deterministic mock fallback
-- 13 API endpoints: locations CRUD, media CRUD+batch, analyze single/all, heatmap, analytics, overview
-- Leaflet.js dark-theme UI at /map: heatmap overlay, mood bars, age chart, daily trend, overview mode
-- SQLite with WAL mode, json_extract for analysis queries
-- Smoke test with 19 assertions
-- DEEP.md architecture docs
-
-### Technical Notes
-- Mock analyzer: SHA-256 hash → deterministic crowd_density, age, mood — same URL = same result
-- Heatmap scatter: golden angle (137.508°) for even point distribution
-- DB: analysis stored as JSON blob, queried with `json_extract()` in SQLite
-- UI: no build step, CDN-loaded Leaflet + leaflet.heat, responsive
-
-### File count
-- 19 Python files across 6 packages
-- 1 HTML file (UI)
-- pyproject.toml (uv), Makefile, DEEP.md, MEMORY.md, README.md
+## v1.0.0
+- Initial release: layered architecture (api/services/repos/schemas/analyzer)
+- Leaflet.js dark-theme heatmap UI with sidebar analytics
+- VisionAnalyzer: OpenAI gpt-4o when API key set, SHA-256 deterministic mock otherwise
+- 13 endpoints: locations CRUD, media CRUD + batch + analyze, heatmap, analytics, overview
+- uv + pyproject.toml, Makefile, smoke tests

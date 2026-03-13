@@ -20,25 +20,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="visiomap",
-    description="Location intelligence from visual media — AI-powered crowd density heatmaps, demographics and mood analytics.",
-    version="1.0.0",
+    description=(
+        "Location intelligence from visual media. "
+        "AI-powered crowd density heatmaps, demographics, mood analytics, "
+        "density alerts, and CSV data export."
+    ),
+    version="1.1.0",
     lifespan=lifespan,
 )
 
-# ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(locations_router)
 app.include_router(media_router)
 app.include_router(analytics_router)
 
-# ── Static files (Leaflet UI) ────────────────────────────────────────────────
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# ── Root / Health ─────────────────────────────────────────────────────────────
-
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "1.1.0"}
 
 
 @app.get("/map")

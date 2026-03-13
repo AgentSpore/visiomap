@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from visiomap.database import get_db
 from visiomap.repositories import LocationRepo
@@ -20,8 +22,11 @@ async def create_location(body: LocationCreate, svc: LocationService = Depends(_
 
 
 @router.get("", response_model=list[LocationResponse])
-async def list_locations(svc: LocationService = Depends(_service)):
-    return await svc.list_all()
+async def list_locations(
+    category: Optional[str] = Query(None, description="Filter: mall|park|street|venue|transit|beach|other"),
+    svc: LocationService = Depends(_service),
+):
+    return await svc.list_all(category=category)
 
 
 @router.get("/{location_id}", response_model=LocationResponse)

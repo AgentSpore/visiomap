@@ -10,20 +10,29 @@ class LocationRepo:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self.db = db
 
-    # ── CRUD ──────────────────────────────────────────────────────────────────
+    # -- ensure category column exists (migration) ---
+    async def _ensure_category(self) -> None:
+        cursor = await self.db.execute("PRAGMA table_info(locations)")
+        cols = [r[1] for r in await cursor.fetchall()]
+        if "category" not in cols:
+            await self.db.execute("ALTER TABLE locations ADD COLUMN category TEXT NOT NULL DEFAULT 'other'")
+            await self.db.commit()
 
     async def create(self, data: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure_category()
         cursor = await self.db.execute(
-            """INSERT INTO locations (name, lat, lng, radius_m, description)
-               VALUES (?, ?, ?, ?, ?)""",
-            (data["name"], data["lat"], data["lng"], data["radius_m"], data.get("description")),
+            """INSERT INTO locations (name, lat, lng, radius_m, category, description)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (data["name"], data["lat"], data["lng"], data["radius_m"],
+             data.get("category", "other"), data.get("description")),
         )
         await self.db.commit()
-        return await self.get_by_id(cursor.lastrowid)  # type: ignore[arg-type]
+        return await self.get_by_id(cursor.lastrowid)
 
     async def get_by_id(self, location_id: int) -> dict[str, Any] | None:
+        await self._ensure_category()
         cursor = await self.db.execute(
-            """SELECT l.id, l.name, l.lat, l.lng, l.radius_m, l.description, l.created_at,
+            """SELECT l.id, l.name, l.lat, l.lng, l.radius_m, l.category, l.description, l.created_at,
                       COUNT(m.id) AS media_count,
                       SUM(CASE WHEN m.analyzed = 1 THEN 1 ELSE 0 END) AS analyzed_count,
                       AVG(CASE WHEN m.analyzed = 1
@@ -39,18 +48,21 @@ class LocationRepo:
             return None
         return self._to_dict(row)
 
-    async def list_all(self) -> list[dict[str, Any]]:
-        cursor = await self.db.execute(
-            """SELECT l.id, l.name, l.lat, l.lng, l.radius_m, l.description, l.created_at,
+    async def list_all(self, category: str | None = None) -> list[dict[str, Any]]:
+        await self._ensure_category()
+        query = """SELECT l.id, l.name, l.lat, l.lng, l.radius_m, l.category, l.description, l.created_at,
                       COUNT(m.id) AS media_count,
                       SUM(CASE WHEN m.analyzed = 1 THEN 1 ELSE 0 END) AS analyzed_count,
                       AVG(CASE WHEN m.analyzed = 1
                           THEN json_extract(m.analysis_json, '$.crowd_density') END) AS avg_density
                FROM locations l
-               LEFT JOIN media m ON m.location_id = l.id
-               GROUP BY l.id
-               ORDER BY l.created_at DESC"""
-        )
+               LEFT JOIN media m ON m.location_id = l.id"""
+        params: list[Any] = []
+        if category:
+            query += " WHERE l.category = ?"
+            params.append(category)
+        query += " GROUP BY l.id ORDER BY l.created_at DESC"
+        cursor = await self.db.execute(query, params)
         return [self._to_dict(r) for r in await cursor.fetchall()]
 
     async def update(self, location_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
@@ -78,8 +90,6 @@ class LocationRepo:
         cursor = await self.db.execute("SELECT 1 FROM locations WHERE id = ?", (location_id,))
         return await cursor.fetchone() is not None
 
-    # ── Analytics queries ─────────────────────────────────────────────────────
-
     async def get_busiest(self) -> str | None:
         cursor = await self.db.execute(
             """SELECT l.name
@@ -93,8 +103,9 @@ class LocationRepo:
         return row[0] if row else None
 
     async def get_summary(self) -> list[dict[str, Any]]:
+        await self._ensure_category()
         cursor = await self.db.execute(
-            """SELECT l.id, l.name,
+            """SELECT l.id, l.name, l.category,
                       COUNT(m.id) AS media_count,
                       SUM(CASE WHEN m.analyzed = 1 THEN 1 ELSE 0 END) AS analyzed_count,
                       AVG(CASE WHEN m.analyzed = 1
@@ -109,14 +120,13 @@ class LocationRepo:
             {
                 "id": r[0],
                 "name": r[1],
-                "media_count": r[2] or 0,
-                "analyzed_count": r[3] or 0,
-                "avg_crowd_density": round(r[4], 2) if r[4] else None,
+                "category": r[2] or "other",
+                "media_count": r[3] or 0,
+                "analyzed_count": int(r[4] or 0),
+                "avg_crowd_density": round(r[5], 2) if r[5] else None,
             }
             for r in rows
         ]
-
-    # ── Private ───────────────────────────────────────────────────────────────
 
     @staticmethod
     def _to_dict(row: aiosqlite.Row) -> dict[str, Any]:
@@ -126,9 +136,10 @@ class LocationRepo:
             "lat": row[2],
             "lng": row[3],
             "radius_m": row[4],
-            "description": row[5],
-            "created_at": row[6],
-            "media_count": row[7] or 0,
-            "analyzed_count": int(row[8] or 0),
-            "avg_crowd_density": round(row[9], 2) if row[9] else None,
+            "category": row[5] or "other",
+            "description": row[6],
+            "created_at": row[7],
+            "media_count": row[8] or 0,
+            "analyzed_count": int(row[9] or 0),
+            "avg_crowd_density": round(row[10], 2) if row[10] else None,
         }
