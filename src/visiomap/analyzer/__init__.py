@@ -1,3 +1,3 @@
-from visiomap.analyzer.vision import analyze
+from visiomap.analyzer.vision import VisionAnalyzer
 
-__all__ = ["analyze"]
+__all__ = ["VisionAnalyzer"]
