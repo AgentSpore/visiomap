@@ -4,6 +4,7 @@ import csv
 import io
 import math
 from collections import Counter
+from datetime import date, timedelta
 from typing import Any
 
 from visiomap.repositories.location_repo import LocationRepo
@@ -611,4 +612,181 @@ class AnalyticsService:
             "peak_density": round(peak_density, 2),
             "quietest_density": round(quietest_density, 2),
             "total_analyzed": total_analyzed,
+        }
+
+    # -- v1.6.0: Crowd Forecast ----------------------------------------------------
+
+    async def get_crowd_forecast(
+        self,
+        location_id: int,
+        target_date: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Predict crowd density for each hour of a target date based on historical
+        day-of-week and hour patterns.
+
+        Args:
+            location_id: Location to forecast.
+            target_date: Date string YYYY-MM-DD. Defaults to tomorrow.
+
+        Returns:
+            Forecast dict or None if location not found.
+        """
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+
+        if target_date:
+            forecast_date = date.fromisoformat(target_date)
+        else:
+            forecast_date = date.today() + timedelta(days=1)
+
+        # Python isoweekday: Mon=1..Sun=7; SQLite strftime('%w'): Sun=0..Sat=6
+        py_weekday = forecast_date.isoweekday()  # 1=Mon .. 7=Sun
+        sqlite_weekday = py_weekday % 7  # Mon=1,Tue=2,...,Sat=6,Sun=0
+
+        hourly_rows = await self.media_repo.get_density_by_weekday_hour(
+            location_id, sqlite_weekday,
+        )
+
+        # Build hour map from historical data
+        hour_map: dict[int, dict[str, Any]] = {
+            r["hour"]: r for r in hourly_rows
+        }
+
+        points = []
+        for h in range(24):
+            if h in hour_map:
+                row = hour_map[h]
+                sample_count = row["sample_count"]
+                predicted = row["avg_density"]
+                # Confidence: scales with sample count, capped at 1.0
+                confidence = min(1.0, round(sample_count / 20.0, 2))
+            else:
+                sample_count = 0
+                predicted = 0.0
+                confidence = 0.0
+
+            points.append({
+                "hour": h,
+                "predicted_density": round(predicted, 2),
+                "confidence": confidence,
+                "based_on_samples": sample_count,
+            })
+
+        # Summary stats
+        non_zero = [p for p in points if p["based_on_samples"] > 0]
+        if non_zero:
+            avg_predicted = round(
+                sum(p["predicted_density"] for p in non_zero) / len(non_zero), 2,
+            )
+            peak_point = max(non_zero, key=lambda p: p["predicted_density"])
+            peak_hour = peak_point["hour"]
+            peak_density = peak_point["predicted_density"]
+        else:
+            avg_predicted = 0.0
+            peak_hour = 0
+            peak_density = 0.0
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "forecast_date": forecast_date.isoformat(),
+            "points": points,
+            "avg_predicted_density": avg_predicted,
+            "peak_hour": peak_hour,
+            "peak_density": peak_density,
+        }
+
+    # -- v1.6.0: Category Benchmarks -----------------------------------------------
+
+    async def get_category_benchmark(
+        self, location_id: int,
+    ) -> dict[str, Any] | None:
+        """Compare a location's metrics against the average for its category.
+
+        Computes percentile ranking for avg_crowd_density, media_count, and
+        analyzed_ratio relative to all locations in the same category.
+        """
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+
+        category = location.get("category", "other")
+        stats = await self.media_repo.get_location_analytics(location_id)
+        total_media = stats["total_media"]
+        analyzed_media = stats["analyzed_media"]
+        avg_density = stats["avg_crowd_density"] or 0.0
+        analyzed_ratio = (analyzed_media / total_media) if total_media > 0 else 0.0
+
+        # Get all locations in the same category
+        cat_stats = await self.media_repo.get_category_stats(category)
+
+        if not cat_stats:
+            # Only this location, no comparison possible
+            benchmarks = []
+            for metric_name, loc_val in [
+                ("avg_crowd_density", avg_density),
+                ("media_count", float(total_media)),
+                ("analyzed_ratio", analyzed_ratio),
+            ]:
+                benchmarks.append({
+                    "metric": metric_name,
+                    "location_value": round(loc_val, 4),
+                    "category_avg": round(loc_val, 4),
+                    "percentile": 50.0,
+                    "above_avg": False,
+                })
+            return {
+                "location_id": location["id"],
+                "location_name": location["name"],
+                "category": category,
+                "benchmarks": benchmarks,
+                "overall_percentile": 50.0,
+            }
+
+        # Build metric vectors for percentile computation
+        metrics = {
+            "avg_crowd_density": {
+                "values": [s["avg_density"] for s in cat_stats],
+                "loc_value": avg_density,
+            },
+            "media_count": {
+                "values": [float(s["media_count"]) for s in cat_stats],
+                "loc_value": float(total_media),
+            },
+            "analyzed_ratio": {
+                "values": [s["analyzed_ratio"] for s in cat_stats],
+                "loc_value": analyzed_ratio,
+            },
+        }
+
+        benchmarks = []
+        percentiles = []
+
+        for metric_name, info in metrics.items():
+            values = info["values"]
+            loc_val = info["loc_value"]
+            cat_avg = sum(values) / len(values) if values else 0.0
+
+            # Percentile: proportion of category locations with value <= loc_val
+            below_count = sum(1 for v in values if v <= loc_val)
+            percentile = round((below_count / len(values)) * 100, 1) if values else 50.0
+
+            benchmarks.append({
+                "metric": metric_name,
+                "location_value": round(loc_val, 4),
+                "category_avg": round(cat_avg, 4),
+                "percentile": percentile,
+                "above_avg": loc_val > cat_avg,
+            })
+            percentiles.append(percentile)
+
+        overall_percentile = round(sum(percentiles) / len(percentiles), 1) if percentiles else 50.0
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "category": category,
+            "benchmarks": benchmarks,
+            "overall_percentile": overall_percentile,
         }
