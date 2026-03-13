@@ -24,6 +24,7 @@ class LocationCreate(BaseModel):
     radius_m: int = Field(500, ge=50, le=50000, description="Monitoring radius in meters")
     category: LocationCategory = LocationCategory.other
     description: str | None = None
+    tags: list[str] = Field(default_factory=list, max_length=20, description="Custom tags for filtering/grouping")
 
 
 class LocationUpdate(BaseModel):
@@ -31,6 +32,7 @@ class LocationUpdate(BaseModel):
     radius_m: int | None = Field(None, ge=50, le=50000)
     category: LocationCategory | None = None
     description: str | None = None
+    tags: list[str] | None = Field(None, max_length=20)
 
 
 class LocationResponse(BaseModel):
@@ -41,6 +43,7 @@ class LocationResponse(BaseModel):
     radius_m: int
     category: str
     description: str | None
+    tags: list[str] = []
     media_count: int = 0
     analyzed_count: int = 0
     avg_crowd_density: float | None = None

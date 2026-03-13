@@ -27,9 +27,11 @@ app = FastAPI(
         "density alerts, location comparison, time-window filtering, CSV data export, "
         "geofencing, location clustering, score trend analysis, "
         "location health scores, cross-location media tag search, "
-        "and crowd density anomaly detection."
+        "crowd density anomaly detection, "
+        "location tags for filtering, media annotations for review workflows, "
+        "and peak hours analysis for crowd density patterns."
     ),
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
@@ -43,7 +45,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.4.0"}
+    return {"status": "ok", "version": "1.5.0"}
 
 
 @app.get("/map")

@@ -17,6 +17,7 @@ from visiomap.schemas.analytics import (
     ScoreTrendResponse,
     HealthScoreResponse,
     AnomalyResponse,
+    PeakHoursResponse,
 )
 from visiomap.services import AnalyticsService
 from visiomap.services.alert_service import AlertService
@@ -105,6 +106,20 @@ async def density_anomalies(
 ):
     """Detect unusual crowd density spikes or drops based on standard deviation analysis."""
     result = await svc.get_anomalies(location_id, threshold=threshold)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
+
+
+# -- v1.5.0: Peak Hours Analysis -----------------------------------------------
+
+@router.get("/locations/{location_id}/analytics/peak-hours", response_model=PeakHoursResponse)
+async def peak_hours(
+    location_id: int,
+    svc: AnalyticsService = Depends(_service),
+):
+    """Crowd density patterns by hour of day — identify peak and off-peak periods."""
+    result = await svc.get_peak_hours(location_id)
     if not result:
         raise HTTPException(404, "Location not found")
     return result

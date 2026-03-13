@@ -24,9 +24,10 @@ async def create_location(body: LocationCreate, svc: LocationService = Depends(_
 @router.get("", response_model=list[LocationResponse])
 async def list_locations(
     category: Optional[str] = Query(None, description="Filter: mall|park|street|venue|transit|beach|other"),
+    tag: Optional[str] = Query(None, description="Filter by location tag"),
     svc: LocationService = Depends(_service),
 ):
-    return await svc.list_all(category=category)
+    return await svc.list_all(category=category, tag=tag)
 
 
 @router.get("/{location_id}", response_model=LocationResponse)
