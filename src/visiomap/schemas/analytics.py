@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 __all__ = [
     "HeatPoint",
@@ -9,6 +9,8 @@ __all__ = [
     "DailyTrend",
     "OverviewResponse",
     "LocationSummary",
+    "AlertCreate",
+    "AlertResponse",
 ]
 
 
@@ -53,6 +55,7 @@ class LocationAnalytics(BaseModel):
 class LocationSummary(BaseModel):
     id: int
     name: str
+    category: str
     media_count: int
     analyzed_count: int
     avg_crowd_density: float | None
@@ -65,3 +68,24 @@ class OverviewResponse(BaseModel):
     busiest_location: str | None
     avg_crowd_density: float | None
     locations_summary: list[LocationSummary]
+
+
+# -- Density Alerts ------------------------------------------------------------
+
+class AlertCreate(BaseModel):
+    location_id: int
+    threshold: float = Field(..., ge=0, le=100, description="Crowd density threshold (0-100)")
+    webhook_url: str = Field(..., min_length=1, description="URL to POST when threshold exceeded")
+    label: str | None = Field(None, max_length=120)
+
+
+class AlertResponse(BaseModel):
+    id: int
+    location_id: int
+    threshold: float
+    webhook_url: str
+    label: str | None
+    fired_count: int
+    last_fired_at: str | None
+    active: bool
+    created_at: str
