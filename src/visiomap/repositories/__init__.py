@@ -1,3 +1,4 @@
-from visiomap.repositories import location_repo, media_repo
+from visiomap.repositories.location_repo import LocationRepo
+from visiomap.repositories.media_repo import MediaRepo
 
-__all__ = ["location_repo", "media_repo"]
+__all__ = ["LocationRepo", "MediaRepo"]
