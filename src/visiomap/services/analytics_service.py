@@ -10,6 +10,14 @@ from visiomap.repositories.location_repo import LocationRepo
 from visiomap.repositories.media_repo import MediaRepo
 
 
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 class AnalyticsService:
     def __init__(self, location_repo: LocationRepo, media_repo: MediaRepo) -> None:
         self.location_repo = location_repo
@@ -181,4 +189,136 @@ class AnalyticsService:
             "radius_m": location["radius_m"],
             "points": points,
             "total_samples": len(points),
+        }
+
+    # -- v1.3.0: Clustering -------------------------------------------------------
+
+    async def cluster_locations(self, radius_km: float = 5.0) -> dict[str, Any]:
+        locations = await self.location_repo.list_all()
+        if not locations:
+            return {"clusters": [], "total_clusters": 0, "unclustered_count": 0, "radius_km": radius_km}
+
+        assigned = set()
+        clusters = []
+        cluster_id = 0
+
+        for loc in locations:
+            if loc["id"] in assigned:
+                continue
+            cluster_id += 1
+            members = [loc]
+            assigned.add(loc["id"])
+            for other in locations:
+                if other["id"] in assigned:
+                    continue
+                dist = _haversine_km(loc["lat"], loc["lng"], other["lat"], other["lng"])
+                if dist <= radius_km:
+                    members.append(other)
+                    assigned.add(other["id"])
+
+            if len(members) < 2:
+                assigned.discard(loc["id"])
+                continue
+
+            center_lat = sum(m["lat"] for m in members) / len(members)
+            center_lng = sum(m["lng"] for m in members) / len(members)
+            densities = [m["avg_crowd_density"] for m in members if m.get("avg_crowd_density") is not None]
+            avg_density = round(sum(densities) / len(densities), 2) if densities else None
+            categories = sorted(set(m.get("category", "other") for m in members))
+
+            clusters.append({
+                "cluster_id": cluster_id,
+                "center_lat": round(center_lat, 6),
+                "center_lng": round(center_lng, 6),
+                "member_count": len(members),
+                "members": [
+                    {
+                        "location_id": m["id"],
+                        "location_name": m["name"],
+                        "lat": m["lat"],
+                        "lng": m["lng"],
+                        "category": m.get("category", "other"),
+                        "avg_crowd_density": m.get("avg_crowd_density"),
+                    }
+                    for m in members
+                ],
+                "avg_crowd_density": avg_density,
+                "categories": categories,
+            })
+
+        unclustered = len(locations) - len(assigned)
+        return {
+            "clusters": clusters,
+            "total_clusters": len(clusters),
+            "unclustered_count": unclustered,
+            "radius_km": radius_km,
+        }
+
+    # -- v1.3.0: Score Trend -------------------------------------------------------
+
+    async def get_score_trend(
+        self,
+        location_id: int,
+        window: int = 7,
+    ) -> dict[str, Any] | None:
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
+        daily = await self.media_repo.get_daily_trend(location_id)
+        daily_sorted = sorted(daily, key=lambda d: d["date"])
+
+        points = []
+        densities = [d["avg_density"] for d in daily_sorted]
+
+        for i, d in enumerate(daily_sorted):
+            start = max(0, i - window + 1)
+            window_vals = densities[start:i + 1]
+            moving_avg = round(sum(window_vals) / len(window_vals), 2) if window_vals else None
+
+            if i == 0:
+                direction = "stable"
+            elif densities[i] > densities[i - 1] * 1.1:
+                direction = "rising"
+            elif densities[i] < densities[i - 1] * 0.9:
+                direction = "falling"
+            else:
+                direction = "stable"
+
+            points.append({
+                "date": d["date"],
+                "avg_density": d["avg_density"],
+                "media_count": d["media_count"],
+                "moving_avg": moving_avg,
+                "direction": direction,
+            })
+
+        if len(densities) >= 3:
+            first_half = densities[:len(densities) // 2]
+            second_half = densities[len(densities) // 2:]
+            avg_first = sum(first_half) / len(first_half) if first_half else 0
+            avg_second = sum(second_half) / len(second_half) if second_half else 0
+            if avg_first > 0:
+                ratio = avg_second / avg_first
+                if ratio > 1.15:
+                    overall = "rising"
+                elif ratio < 0.85:
+                    overall = "falling"
+                else:
+                    overall = "stable"
+            else:
+                overall = "stable"
+        else:
+            overall = "stable"
+
+        latest_density = densities[-1] if densities else None
+        latest_ma = points[-1]["moving_avg"] if points else None
+
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "window_days": window,
+            "points": points,
+            "overall_trend": overall,
+            "latest_density": latest_density,
+            "latest_moving_avg": latest_ma,
         }
