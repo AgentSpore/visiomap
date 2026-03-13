@@ -1,33 +1,39 @@
-from fastapi import APIRouter, Depends
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from visiomap.database import get_db
-from visiomap.schemas.analytics import HeatmapResponse, LocationAnalytics, OverviewResponse
-from visiomap.services import analytics_service
+from visiomap.repositories import LocationRepo, MediaRepo
+from visiomap.schemas.analytics import (
+    HeatmapResponse,
+    LocationAnalytics,
+    OverviewResponse,
+)
+from visiomap.services import AnalyticsService
 
-router = APIRouter(tags=["Analytics"])
+router = APIRouter(tags=["analytics"])
+
+
+def _service(db=Depends(get_db)) -> AnalyticsService:
+    return AnalyticsService(LocationRepo(db), MediaRepo(db))
 
 
 @router.get("/locations/{location_id}/heatmap", response_model=HeatmapResponse)
-async def heatmap(location_id: int, db=Depends(get_db)):
-    """
-    Spatial heatmap data for a location.
-    Each analyzed photo is scattered within the monitoring radius;
-    intensity is normalized crowd_density / 10.
-    Feed the points array to Leaflet.heat or any heatmap library.
-    """
-    return await analytics_service.get_heatmap(db, location_id)
+async def get_heatmap(location_id: int, svc: AnalyticsService = Depends(_service)):
+    result = await svc.get_heatmap(location_id)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
 
 
 @router.get("/locations/{location_id}/analytics", response_model=LocationAnalytics)
-async def location_analytics(location_id: int, db=Depends(get_db)):
-    """
-    Full analytics for a location: crowd trends, mood distribution,
-    age breakdown, weather, top environment tags, 30-day daily trend.
-    """
-    return await analytics_service.get_location_analytics(db, location_id)
+async def get_analytics(location_id: int, svc: AnalyticsService = Depends(_service)):
+    result = await svc.get_location_analytics(location_id)
+    if not result:
+        raise HTTPException(404, "Location not found")
+    return result
 
 
 @router.get("/analytics/overview", response_model=OverviewResponse)
-async def overview(db=Depends(get_db)):
-    """Cross-location overview: totals, busiest location, per-location summary."""
-    return await analytics_service.get_overview(db)
+async def get_overview(svc: AnalyticsService = Depends(_service)):
+    return await svc.get_overview()
