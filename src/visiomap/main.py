@@ -1,12 +1,15 @@
+from __future__ import annotations
+
+import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import pathlib
 
+from visiomap.api import analytics_router, locations_router, media_router
 from visiomap.database import init_db
-from visiomap.api import locations_router, media_router, analytics_router
+
+STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 
 @asynccontextmanager
@@ -17,31 +20,28 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="visiomap",
-    description=(
-        "Location intelligence from visual media. "
-        "Submit photos from open sources, run AI vision analysis, "
-        "and get interactive crowd density heatmaps, age demographics, "
-        "and mood analytics per location."
-    ),
+    description="Location intelligence from visual media — AI-powered crowd density heatmaps, demographics and mood analytics.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
+# ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(locations_router)
 app.include_router(media_router)
 app.include_router(analytics_router)
 
-# ── Static UI ─────────────────────────────────────────────────────────────────
-_static_dir = pathlib.Path(__file__).parent / "static"
-if _static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
-
-    @app.get("/map", include_in_schema=False)
-    async def map_ui():
-        return FileResponse(str(_static_dir / "index.html"))
+# ── Static files (Leaflet UI) ────────────────────────────────────────────────
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
-@app.get("/health", tags=["System"])
+# ── Root / Health ─────────────────────────────────────────────────────────────
+
+@app.get("/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0", "service": "visiomap"}
+    return {"status": "ok", "version": "1.0.0"}
+
+
+@app.get("/map")
+async def map_page():
+    from fastapi.responses import FileResponse
+    return FileResponse(STATIC_DIR / "index.html")
