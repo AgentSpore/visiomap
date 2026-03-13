@@ -9,6 +9,8 @@ __all__ = [
     "AnalysisResult",
     "MediaResponse",
     "AnalyzeAllResponse",
+    "AnnotationCreate",
+    "AnnotationResponse",
 ]
 
 
@@ -58,3 +60,18 @@ class AnalyzeAllResponse(BaseModel):
     analyzed: int
     failed: int
     errors: list[str]
+
+
+# -- v1.5.0: Media Annotations ------------------------------------------------
+
+class AnnotationCreate(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000, description="Annotation text")
+    author: str = Field("reviewer", max_length=100, description="Author name or role")
+
+
+class AnnotationResponse(BaseModel):
+    id: int
+    media_id: int
+    text: str
+    author: str
+    created_at: str
