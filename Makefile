@@ -1,21 +1,18 @@
-.PHONY: install dev lint check smoke test run
-
-install:
-	uv sync
+.PHONY: dev run test smoke lint fmt
 
 dev:
-	uv sync --extra dev
+	uv sync --all-extras
+
+run:
+	uv run uvicorn visiomap.main:app --reload --host 0.0.0.0 --port 8000
 
 lint:
-	uv run ruff check src/ --select E,W,F,I --ignore E501
+	uv run ruff check src/
 
-check:
-	uv run python -c "from visiomap.main import app; print(f'OK: {app.title} v{app.version}')"
+fmt:
+	uv run ruff format src/
+
+test: lint smoke
 
 smoke:
 	uv run python scripts/smoke_test.py
-
-test: lint check smoke
-
-run:
-	uv run uvicorn visiomap.main:app --reload --port 8000
