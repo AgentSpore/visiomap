@@ -1,121 +1,147 @@
+"""Vision analyzer: OpenAI gpt-4o with deterministic mock fallback.
+
+When VISIOMAP_OPENAI_API_KEY is set, photos are analyzed through the OpenAI
+Vision API.  Otherwise a deterministic mock generates plausible results from
+the URL hash — giving stable, reproducible output for development and testing.
 """
-Pluggable vision analysis module.
-Uses OpenAI Vision API (gpt-4o) if OPENAI_API_KEY is set,
-otherwise deterministic mock based on URL hash (dev/testing).
-"""
+
+from __future__ import annotations
+
 import hashlib
 import json
-import random
-from typing import Optional
+import logging
+from typing import Any
 
 import httpx
 
 from visiomap.config import settings
-from visiomap.schemas.media import AnalysisResult
 
-_ENV_POOL = [
-    "outdoor", "indoor", "busy", "quiet", "commercial", "residential",
-    "daylight", "evening", "crowded", "spacious", "clean", "market",
-    "transit", "park", "restaurant", "retail", "street", "plaza",
+logger = logging.getLogger(__name__)
+
+_ANALYSIS_PROMPT = """Analyze this photo for location intelligence. Return ONLY valid JSON:
+{
+  "crowd_density": <float 0-10, 0=empty 10=packed>,
+  "crowd_count_estimate": <int rough headcount>,
+  "age_groups": {"child": <pct>, "young_adult": <pct>, "adult": <pct>, "senior": <pct>},
+  "mood": {"positive": <pct>, "neutral": <pct>, "negative": <pct>},
+  "dominant_mood": "<positive|neutral|negative>",
+  "environment_tags": ["<tag1>", "<tag2>", ...],
+  "weather": "<sunny|cloudy|rainy|night|indoor|unknown>",
+  "time_of_day": "<morning|afternoon|evening|night|unknown>"
+}
+Percentages in age_groups and mood must sum to 100. Be precise and analytical."""
+
+_WEATHERS = ["sunny", "cloudy", "rainy", "night", "indoor", "sunny", "cloudy", "sunny"]
+_TIMES = ["morning", "afternoon", "evening", "night", "afternoon", "morning", "afternoon", "evening"]
+_MOODS = ["positive", "neutral", "negative"]
+_ENV_TAGS = [
+    ["outdoor", "busy", "commercial"],
+    ["outdoor", "quiet", "residential"],
+    ["indoor", "crowded", "mall"],
+    ["outdoor", "park", "green"],
+    ["indoor", "office", "modern"],
+    ["outdoor", "market", "street"],
+    ["indoor", "restaurant", "cozy"],
+    ["outdoor", "beach", "tourist"],
 ]
 
-_WEATHER_OPTS = ["sunny", "overcast", "rainy", "cloudy", "indoor"]
-_TIME_OPTS = ["morning", "afternoon", "evening", "night"]
 
+class VisionAnalyzer:
+    """Pluggable vision analyzer with OpenAI and mock backends."""
 
-def _mock(url: str) -> AnalysisResult:
-    """Deterministic mock — same URL always returns same result."""
-    rng = random.Random(int(hashlib.md5(url.encode()).hexdigest(), 16))
+    def __init__(self) -> None:
+        self._client: httpx.AsyncClient | None = None
 
-    density = round(rng.uniform(0.8, 9.4), 1)
-    count = int(density * rng.uniform(6, 22))
+    async def analyze(self, image_url: str) -> dict[str, Any]:
+        if settings.use_real_analysis:
+            return await self._analyze_openai(image_url)
+        return self._analyze_mock(image_url)
 
-    c, y, a, s = rng.randint(5, 18), rng.randint(20, 38), rng.randint(28, 44), 0
-    s = max(5, 100 - c - y - a)
-    total = c + y + a + s
-    age = {
-        "child": round(c / total * 100),
-        "young_adult": round(y / total * 100),
-        "adult": round(a / total * 100),
-        "senior": round(s / total * 100),
-    }
+    # ── OpenAI Vision ─────────────────────────────────────────────────────────
 
-    pos, neu = rng.randint(30, 68), rng.randint(12, 35)
-    neg = max(0, 100 - pos - neu)
-    mood = {"positive": pos, "neutral": neu, "negative": neg}
-    dominant = max(mood, key=mood.get)
+    async def _analyze_openai(self, image_url: str) -> dict[str, Any]:
+        if not self._client:
+            self._client = httpx.AsyncClient(timeout=60.0)
 
-    pool = _ENV_POOL.copy()
-    rng.shuffle(pool)
-    env_tags = sorted(pool[: rng.randint(3, 6)])
-
-    return AnalysisResult(
-        crowd_density=density,
-        crowd_count_estimate=count,
-        age_groups=age,
-        mood=mood,
-        dominant_mood=dominant,
-        environment_tags=env_tags,
-        weather=rng.choice(_WEATHER_OPTS),
-        time_of_day=rng.choice(_TIME_OPTS),
-        confidence=round(rng.uniform(0.60, 0.93), 2),
-        analysis_source="mock",
-    )
-
-
-_VISION_PROMPT = (
-    "Analyze this image for location intelligence. "
-    "Respond ONLY with valid JSON (no markdown) containing:\n"
-    "crowd_density (float 0-10), crowd_count_estimate (int), "
-    "age_groups (object: child/young_adult/adult/senior as % summing 100), "
-    "mood (object: positive/neutral/negative as % summing 100), "
-    "dominant_mood (string), environment_tags (array of 3-6 strings), "
-    "weather (sunny|overcast|rainy|cloudy|indoor), "
-    "time_of_day (morning|afternoon|evening|night), "
-    "confidence (float 0-1)."
-)
-
-
-async def _call_openai(image_url: str, api_key: str) -> AnalysisResult:
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
+        resp = await self._client.post(
             "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
             json={
-                "model": "gpt-4o",
-                "max_tokens": 600,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
-                        {"type": "text", "text": _VISION_PROMPT},
-                    ],
-                }],
+                "model": settings.openai_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _ANALYSIS_PROMPT},
+                            {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
+                        ],
+                    }
+                ],
+                "max_tokens": 500,
+                "temperature": 0.1,
             },
         )
         resp.raise_for_status()
-        raw = resp.json()["choices"][0]["message"]["content"].strip()
-        # Strip markdown fences if present
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        data = json.loads(raw.strip())
-        data["analysis_source"] = "openai"
-        return AnalysisResult(**data)
+        text = resp.json()["choices"][0]["message"]["content"]
 
+        # Extract JSON from possible markdown fences
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
 
-async def analyze(image_url: str) -> AnalysisResult:
-    """
-    Analyze an image. Uses OpenAI Vision if OPENAI_API_KEY configured,
-    falls back to deterministic mock otherwise.
-    """
-    if settings.openai_api_key:
-        try:
-            return await _call_openai(image_url, settings.openai_api_key)
-        except Exception as exc:
-            result = _mock(image_url)
-            return result.model_copy(update={
-                "analysis_source": "mock_fallback",
-            })
-    return _mock(image_url)
+        result = json.loads(text)
+        result["analysis_source"] = "openai"
+        result["confidence"] = 0.85
+        return result
+
+    # ── Deterministic mock ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _analyze_mock(image_url: str) -> dict[str, Any]:
+        h = int(hashlib.sha256(image_url.encode()).hexdigest()[:8], 16)
+
+        density = round(1.0 + (h % 80) / 10.0, 1)  # 1.0 — 9.0
+        count = int(density * 5 + (h % 20))
+
+        # Age distribution seeded by hash
+        child = 5 + (h >> 8) % 15
+        senior = 5 + (h >> 12) % 20
+        young_adult = 20 + (h >> 16) % 25
+        adult = 100 - child - senior - young_adult
+
+        # Mood
+        positive = 30 + (h >> 20) % 40
+        negative = 5 + (h >> 24) % 20
+        neutral = 100 - positive - negative
+
+        mood_vals = {"positive": positive, "neutral": neutral, "negative": negative}
+        dominant = max(mood_vals, key=mood_vals.get)  # type: ignore[arg-type]
+
+        return {
+            "crowd_density": density,
+            "crowd_count_estimate": count,
+            "age_groups": {
+                "child": float(child),
+                "young_adult": float(young_adult),
+                "adult": float(adult),
+                "senior": float(senior),
+            },
+            "mood": {
+                "positive": float(positive),
+                "neutral": float(neutral),
+                "negative": float(negative),
+            },
+            "dominant_mood": dominant,
+            "environment_tags": _ENV_TAGS[h % len(_ENV_TAGS)],
+            "weather": _WEATHERS[h % len(_WEATHERS)],
+            "time_of_day": _TIMES[h % len(_TIMES)],
+            "confidence": round(0.60 + (h % 30) / 100, 2),
+            "analysis_source": "mock",
+        }
+
+    async def close(self) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
