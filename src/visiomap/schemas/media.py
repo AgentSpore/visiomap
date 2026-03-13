@@ -11,6 +11,8 @@ __all__ = [
     "AnalyzeAllResponse",
     "AnnotationCreate",
     "AnnotationResponse",
+    "TagSuggestion",
+    "TagSuggestionsResponse",
 ]
 
 
@@ -75,3 +77,17 @@ class AnnotationResponse(BaseModel):
     text: str
     author: str
     created_at: str
+
+
+# -- v1.6.0: Media Auto-Tag Suggestions ---------------------------------------
+
+class TagSuggestion(BaseModel):
+    tag: str
+    source: str
+    confidence: float = Field(..., ge=0, le=1)
+
+
+class TagSuggestionsResponse(BaseModel):
+    media_id: int
+    suggestions: list[TagSuggestion]
+    auto_applicable_count: int
