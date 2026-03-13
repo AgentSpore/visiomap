@@ -1,12 +1,22 @@
-from typing import Optional
+from __future__ import annotations
+
 from pydantic import BaseModel
+
+__all__ = [
+    "HeatPoint",
+    "HeatmapResponse",
+    "LocationAnalytics",
+    "DailyTrend",
+    "OverviewResponse",
+    "LocationSummary",
+]
 
 
 class HeatPoint(BaseModel):
     lat: float
     lng: float
-    intensity: float        # 0.0–1.0 normalized
-    crowd_density: float    # raw 0–10
+    intensity: float
+    crowd_density: float
     sample_count: int
 
 
@@ -18,14 +28,12 @@ class HeatmapResponse(BaseModel):
     radius_m: int
     points: list[HeatPoint]
     total_samples: int
-    max_density: float
 
 
-class DailyTrendEntry(BaseModel):
-    day: str
-    sample_count: int
-    avg_crowd_density: float
-    dominant_mood: Optional[str]
+class DailyTrend(BaseModel):
+    date: str
+    avg_density: float
+    media_count: int
 
 
 class LocationAnalytics(BaseModel):
@@ -33,30 +41,27 @@ class LocationAnalytics(BaseModel):
     location_name: str
     total_media: int
     analyzed_media: int
-    avg_crowd_density: Optional[float]
-    peak_crowd_density: Optional[float]
-    dominant_mood: Optional[str]
+    avg_crowd_density: float | None
+    peak_crowd_density: float | None
+    dominant_mood: str | None
     top_environment_tags: list[str]
-    age_distribution: Optional[dict[str, float]]
-    mood_distribution: Optional[dict[str, float]]
-    weather_breakdown: Optional[dict[str, int]]
-    daily_trend: list[DailyTrendEntry]
+    age_distribution: dict[str, float] | None
+    mood_distribution: dict[str, float] | None
+    daily_trend: list[DailyTrend]
 
 
 class LocationSummary(BaseModel):
     id: int
     name: str
-    lat: float
-    lng: float
     media_count: int
-    avg_crowd_density: Optional[float]
-    dominant_mood: Optional[str]
+    analyzed_count: int
+    avg_crowd_density: float | None
 
 
 class OverviewResponse(BaseModel):
     total_locations: int
     total_media: int
     analyzed_media: int
-    busiest_location: Optional[str]
-    avg_crowd_density: Optional[float]
-    locations: list[LocationSummary]
+    busiest_location: str | None
+    avg_crowd_density: float | None
+    locations_summary: list[LocationSummary]
