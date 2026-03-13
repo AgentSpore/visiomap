@@ -14,6 +14,14 @@ __all__ = [
     "AlertResponse",
     "ComparisonEntry",
     "ComparisonResponse",
+    "GeofenceCreate",
+    "GeofenceResponse",
+    "GeofenceCheckRequest",
+    "GeofenceCheckResponse",
+    "ClusterEntry",
+    "ClusterResponse",
+    "TrendPoint",
+    "ScoreTrendResponse",
 ]
 
 
@@ -119,3 +127,89 @@ class ComparisonResponse(BaseModel):
     locations: list[ComparisonEntry]
     from_date: str | None
     to_date: str | None
+
+
+# -- v1.3.0: Geofencing -------------------------------------------------------
+
+class LatLng(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+
+
+class GeofenceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    polygon: list[LatLng] = Field(
+        ..., min_length=3, max_length=100,
+        description="Polygon vertices as lat/lng pairs (minimum 3 points)",
+    )
+
+
+class GeofenceResponse(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    polygon: list[LatLng]
+    vertex_count: int
+    locations_inside: int
+    created_at: str
+
+
+class GeofenceCheckRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+
+
+class GeofenceCheckResponse(BaseModel):
+    geofence_id: int
+    geofence_name: str
+    point: LatLng
+    inside: bool
+
+
+# -- v1.3.0: Clustering -------------------------------------------------------
+
+class ClusterMember(BaseModel):
+    location_id: int
+    location_name: str
+    lat: float
+    lng: float
+    category: str
+    avg_crowd_density: float | None
+
+
+class ClusterEntry(BaseModel):
+    cluster_id: int
+    center_lat: float
+    center_lng: float
+    member_count: int
+    members: list[ClusterMember]
+    avg_crowd_density: float | None
+    categories: list[str]
+
+
+class ClusterResponse(BaseModel):
+    clusters: list[ClusterEntry]
+    total_clusters: int
+    unclustered_count: int
+    radius_km: float
+
+
+# -- v1.3.0: Score Trend ------------------------------------------------------
+
+class TrendPoint(BaseModel):
+    date: str
+    avg_density: float
+    media_count: int
+    moving_avg: float | None
+    direction: str
+
+
+class ScoreTrendResponse(BaseModel):
+    location_id: int
+    location_name: str
+    window_days: int
+    points: list[TrendPoint]
+    overall_trend: str
+    latest_density: float | None
+    latest_moving_avg: float | None
