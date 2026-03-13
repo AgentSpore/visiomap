@@ -1,150 +1,127 @@
+from __future__ import annotations
+
 import math
-from typing import Optional
+import random
+from collections import Counter
+from typing import Any
 
-import aiosqlite
-from fastapi import HTTPException
-
-from visiomap.repositories import location_repo, media_repo
-from visiomap.schemas.analytics import (
-    HeatPoint, HeatmapResponse, LocationAnalytics, OverviewResponse,
-    DailyTrendEntry, LocationSummary,
-)
+from visiomap.repositories.location_repo import LocationRepo
+from visiomap.repositories.media_repo import MediaRepo
 
 
-def _offset_coords(lat: float, lng: float, dx_m: float, dy_m: float) -> tuple[float, float]:
-    """Offset lat/lng by dx (east) and dy (north) in metres."""
-    new_lat = lat + (dy_m / 111_320)
-    new_lng = lng + (dx_m / (111_320 * math.cos(math.radians(lat))))
-    return round(new_lat, 6), round(new_lng, 6)
+class AnalyticsService:
+    def __init__(self, location_repo: LocationRepo, media_repo: MediaRepo) -> None:
+        self.location_repo = location_repo
+        self.media_repo = media_repo
 
+    async def get_overview(self) -> dict[str, Any]:
+        total_media = await self.media_repo.count_all()
+        analyzed_media = await self.media_repo.count_analyzed()
+        avg_density = await self.media_repo.get_avg_density()
+        busiest = await self.location_repo.get_busiest()
+        summary = await self.location_repo.get_summary()
+        locations = await self.location_repo.list_all()
 
-def _build_heatmap(
-    location: dict, raw_items: list[dict]
-) -> HeatmapResponse:
-    """
-    Spread analyzed media into a spatial grid around the location center.
-    Uses a deterministic scatter so the same media always lands at the same point.
-    """
-    import hashlib, random
+        return {
+            "total_locations": len(locations),
+            "total_media": total_media,
+            "analyzed_media": analyzed_media,
+            "busiest_location": busiest,
+            "avg_crowd_density": avg_density,
+            "locations_summary": summary,
+        }
 
-    center_lat = location["lat"]
-    center_lng = location["lng"]
-    radius_m = location["radius_m"]
+    async def get_location_analytics(self, location_id: int) -> dict[str, Any] | None:
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
 
-    if not raw_items:
-        return HeatmapResponse(
-            location_id=location["id"],
-            location_name=location["name"],
-            center_lat=center_lat,
-            center_lng=center_lng,
-            radius_m=radius_m,
-            points=[],
-            total_samples=0,
-            max_density=0,
-        )
+        stats = await self.media_repo.get_location_analytics(location_id)
+        analyses = await self.media_repo.get_analyzed_media(location_id)
+        daily = await self.media_repo.get_daily_trend(location_id)
 
-    max_density = max(r["crowd_density"] or 0 for r in raw_items)
-    points: list[HeatPoint] = []
+        # Aggregate age, mood, tags from all analyses
+        age_agg: dict[str, float] = {}
+        mood_agg: dict[str, float] = {}
+        tag_counter: Counter[str] = Counter()
+        mood_counter: Counter[str] = Counter()
 
-    for item in raw_items:
-        # Deterministic scatter based on URL
-        h = int(hashlib.md5(item["source_url"].encode()).hexdigest(), 16)
-        rng = random.Random(h)
-        angle = rng.uniform(0, 2 * math.pi)
-        dist = rng.uniform(0, radius_m * 0.9)
-        dx = dist * math.cos(angle)
-        dy = dist * math.sin(angle)
-        lat, lng = _offset_coords(center_lat, center_lng, dx, dy)
-        density = item["crowd_density"] or 0
-        intensity = round(density / 10.0, 3)
+        for a in analyses:
+            for k, v in a.get("age_groups", {}).items():
+                age_agg[k] = age_agg.get(k, 0) + v
+            for k, v in a.get("mood", {}).items():
+                mood_agg[k] = mood_agg.get(k, 0) + v
+            tag_counter.update(a.get("environment_tags", []))
+            mood_counter[a.get("dominant_mood", "neutral")] += 1
 
-        points.append(HeatPoint(
-            lat=lat,
-            lng=lng,
-            intensity=intensity,
-            crowd_density=density,
-            sample_count=1,
-        ))
+        n = len(analyses) or 1
+        age_dist = {k: round(v / n, 1) for k, v in age_agg.items()} if age_agg else None
+        mood_dist = {k: round(v / n, 1) for k, v in mood_agg.items()} if mood_agg else None
+        dominant_mood = mood_counter.most_common(1)[0][0] if mood_counter else None
 
-    return HeatmapResponse(
-        location_id=location["id"],
-        location_name=location["name"],
-        center_lat=center_lat,
-        center_lng=center_lng,
-        radius_m=radius_m,
-        points=points,
-        total_samples=len(points),
-        max_density=round(max_density, 1),
-    )
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "total_media": stats["total_media"],
+            "analyzed_media": stats["analyzed_media"],
+            "avg_crowd_density": stats["avg_crowd_density"],
+            "peak_crowd_density": stats["peak_crowd_density"],
+            "dominant_mood": dominant_mood,
+            "top_environment_tags": [t for t, _ in tag_counter.most_common(5)],
+            "age_distribution": age_dist,
+            "mood_distribution": mood_dist,
+            "daily_trend": daily,
+        }
 
+    async def get_heatmap(self, location_id: int) -> dict[str, Any] | None:
+        location = await self.location_repo.get_by_id(location_id)
+        if not location:
+            return None
 
-async def get_heatmap(db: aiosqlite.Connection, location_id: int) -> HeatmapResponse:
-    loc = await location_repo.get_by_id(db, location_id)
-    if not loc:
-        raise HTTPException(404, "Location not found")
-    raw = await media_repo.heatmap_data(db, location_id)
-    return _build_heatmap(loc, raw)
+        analyses = await self.media_repo.get_heatmap_data(location_id)
+        if not analyses:
+            return {
+                "location_id": location["id"],
+                "location_name": location["name"],
+                "center_lat": location["lat"],
+                "center_lng": location["lng"],
+                "radius_m": location["radius_m"],
+                "points": [],
+                "total_samples": 0,
+            }
 
+        # Generate spatial scatter points within radius
+        # Each analysis maps to a point with slight offset from center
+        points = []
+        max_density = max(a.get("crowd_density", 0) for a in analyses)
+        max_density = max_density or 1
 
-async def get_location_analytics(
-    db: aiosqlite.Connection, location_id: int
-) -> LocationAnalytics:
-    loc = await location_repo.get_by_id(db, location_id)
-    if not loc:
-        raise HTTPException(404, "Location not found")
-    data = await media_repo.location_analytics_data(db, location_id)
+        for i, a in enumerate(analyses):
+            density = a.get("crowd_density", 0)
+            # Deterministic offset using index (reproducible scatter)
+            angle = (i * 137.508) % 360  # golden angle
+            dist_frac = ((i * 7 + 3) % 10) / 10.0  # 0.0–0.9
+            r_deg = (location["radius_m"] / 111_000) * dist_frac
 
-    return LocationAnalytics(
-        location_id=location_id,
-        location_name=loc["name"],
-        total_media=data["total"] or 0,
-        analyzed_media=int(data["analyzed"] or 0),
-        avg_crowd_density=round(data["avg_density"], 2) if data["avg_density"] else None,
-        peak_crowd_density=round(data["peak_density"], 1) if data["peak_density"] else None,
-        dominant_mood=data["dominant_mood"],
-        top_environment_tags=data["top_tags"],
-        age_distribution=data["age_distribution"],
-        mood_distribution=data["mood_distribution"],
-        weather_breakdown=data["weather_breakdown"],
-        daily_trend=[
-            DailyTrendEntry(**entry) for entry in data["daily_trend"]
-        ],
-    )
+            lat_off = r_deg * math.cos(math.radians(angle))
+            lng_off = r_deg * math.sin(math.radians(angle)) / max(
+                math.cos(math.radians(location["lat"])), 0.01
+            )
 
+            points.append({
+                "lat": round(location["lat"] + lat_off, 6),
+                "lng": round(location["lng"] + lng_off, 6),
+                "intensity": round(density / max_density, 3),
+                "crowd_density": density,
+                "sample_count": 1,
+            })
 
-async def get_overview(db: aiosqlite.Connection) -> OverviewResponse:
-    data = await media_repo.overview_data(db)
-    locs_raw = await location_repo.list_all(db)
-
-    locations = [
-        LocationSummary(
-            id=r["id"],
-            name=r["name"],
-            lat=r["lat"],
-            lng=r["lng"],
-            media_count=r["media_count"] or 0,
-            avg_crowd_density=round(r["avg_crowd_density"], 2) if r["avg_crowd_density"] else None,
-            dominant_mood=None,
-        )
-        for r in locs_raw
-    ]
-
-    # Enrich with dominant mood from overview data
-    loc_map = {l["id"]: l for l in data["locations"]}
-    for loc in locations:
-        if loc.id in loc_map:
-            loc.dominant_mood = loc_map[loc.id].get("dominant_mood")
-
-    busiest = None
-    if data["locations"]:
-        b = max(data["locations"], key=lambda x: x.get("avg_density") or 0)
-        busiest = b["name"] if b.get("avg_density") else None
-
-    return OverviewResponse(
-        total_locations=len(locs_raw),
-        total_media=data["total_media"],
-        analyzed_media=data["analyzed_media"],
-        busiest_location=busiest,
-        avg_crowd_density=round(data["avg_density"], 2) if data["avg_density"] else None,
-        locations=locations,
-    )
+        return {
+            "location_id": location["id"],
+            "location_name": location["name"],
+            "center_lat": location["lat"],
+            "center_lng": location["lng"],
+            "radius_m": location["radius_m"],
+            "points": points,
+            "total_samples": len(points),
+        }
