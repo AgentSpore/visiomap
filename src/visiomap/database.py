@@ -99,6 +99,44 @@ CREATE TABLE IF NOT EXISTS zone_template_locations (
 
 CREATE INDEX IF NOT EXISTS idx_ztl_template ON zone_template_locations(template_id);
 CREATE INDEX IF NOT EXISTS idx_ztl_location ON zone_template_locations(location_id);
+
+-- v1.8.0: Events
+CREATE TABLE IF NOT EXISTS events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    location_id     INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    name            TEXT    NOT NULL,
+    description     TEXT,
+    event_type      TEXT    NOT NULL DEFAULT 'general',
+    expected_crowd  INTEGER NOT NULL DEFAULT 100,
+    actual_crowd    INTEGER,
+    status          TEXT    NOT NULL DEFAULT 'scheduled',
+    start_time      TEXT    NOT NULL,
+    end_time        TEXT    NOT NULL,
+    created_at      TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_location ON events(location_id);
+CREATE INDEX IF NOT EXISTS idx_events_status   ON events(status);
+
+-- v1.8.0: Location Groups
+CREATE TABLE IF NOT EXISTS location_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    description TEXT,
+    group_type  TEXT    NOT NULL DEFAULT 'district',
+    created_at  TEXT    DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS location_group_members (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id    INTEGER NOT NULL REFERENCES location_groups(id) ON DELETE CASCADE,
+    location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+    added_at    TEXT    DEFAULT (datetime('now')),
+    UNIQUE(group_id, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lgm_group    ON location_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_lgm_location ON location_group_members(location_id);
 """
 
 
