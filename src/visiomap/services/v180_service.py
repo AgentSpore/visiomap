@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from visiomap.api.v180_repo import EventRepo, LocationGroupRepo, OccupancyRepo
+from visiomap.repositories.v180_repo import EventRepo, LocationGroupRepo, OccupancyRepo
 
 
 class EventService:
