@@ -1,8 +1,8 @@
-"""Vision analyzer: OpenAI gpt-4o with deterministic mock fallback.
+"""Vision analyzer: OpenRouter (Gemini Flash) with deterministic mock fallback.
 
-When VISIOMAP_OPENAI_API_KEY is set, photos are analyzed through the OpenAI
-Vision API.  Otherwise a deterministic mock generates plausible results from
-the URL hash — giving stable, reproducible output for development and testing.
+When OPENROUTER_API_KEY is set, photos are analyzed through OpenRouter API
+using a free vision-capable model. Otherwise a deterministic mock generates
+plausible results from the URL hash.
 """
 
 from __future__ import annotations
@@ -47,33 +47,34 @@ _ENV_TAGS = [
 
 
 class VisionAnalyzer:
-    """Pluggable vision analyzer with OpenAI and mock backends."""
+    """Pluggable vision analyzer with OpenRouter and mock backends."""
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
 
     async def analyze(self, image_url: str) -> dict[str, Any]:
         if settings.use_real_analysis:
-            return await self._analyze_openai(image_url)
+            return await self._analyze_openrouter(image_url)
         return self._analyze_mock(image_url)
 
-    # ── OpenAI Vision ─────────────────────────────────────────────────────────
-
-    async def _analyze_openai(self, image_url: str) -> dict[str, Any]:
+    async def _analyze_openrouter(self, image_url: str) -> dict[str, Any]:
         if not self._client:
             self._client = httpx.AsyncClient(timeout=60.0)
 
         resp = await self._client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
             json={
-                "model": settings.openai_model,
+                "model": settings.llm_model,
                 "messages": [
                     {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": _ANALYSIS_PROMPT},
-                            {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
+                            {"type": "image_url", "image_url": {"url": image_url}},
                         ],
                     }
                 ],
@@ -84,7 +85,6 @@ class VisionAnalyzer:
         resp.raise_for_status()
         text = resp.json()["choices"][0]["message"]["content"]
 
-        # Extract JSON from possible markdown fences
         if "```" in text:
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -92,33 +92,24 @@ class VisionAnalyzer:
             text = text.strip()
 
         result = json.loads(text)
-        result["analysis_source"] = "openai"
+        result["analysis_source"] = "openrouter"
         result["confidence"] = 0.85
         return result
-
-    # ── Deterministic mock ────────────────────────────────────────────────────
 
     @staticmethod
     def _analyze_mock(image_url: str) -> dict[str, Any]:
         h = int(hashlib.sha256(image_url.encode()).hexdigest()[:8], 16)
-
-        density = round(1.0 + (h % 80) / 10.0, 1)  # 1.0 — 9.0
+        density = round(1.0 + (h % 80) / 10.0, 1)
         count = int(density * 5 + (h % 20))
-
-        # Age distribution seeded by hash
         child = 5 + (h >> 8) % 15
         senior = 5 + (h >> 12) % 20
         young_adult = 20 + (h >> 16) % 25
         adult = 100 - child - senior - young_adult
-
-        # Mood
         positive = 30 + (h >> 20) % 40
         negative = 5 + (h >> 24) % 20
         neutral = 100 - positive - negative
-
         mood_vals = {"positive": positive, "neutral": neutral, "negative": negative}
-        dominant = max(mood_vals, key=mood_vals.get)  # type: ignore[arg-type]
-
+        dominant = max(mood_vals, key=mood_vals.get)
         return {
             "crowd_density": density,
             "crowd_count_estimate": count,
